@@ -31,6 +31,11 @@ Run a DeepSeek-powered AI character ("Da Fei Yu", a community-created persona ba
 
 Rationale: automating a personal WeChat account offers only three technical routes—protocol emulation, client injection, and UI automation. The first two face ongoing platform enforcement and legal pressure, with multiple public precedents of takedowns and bans. UI automation never touches client internals and is the lowest-risk option, at the cost of requiring a live Windows desktop session. The project therefore concentrates all computation and state on the server, reducing the Windows endpoint to a stateless dumb terminal and lowering the cost of recovery from any single-point failure.
 
+Two deployment topologies:
+
+- **Single-machine (recommended)**: brain and hand run on the same Windows host; the brain listens on `127.0.0.1` only—no domain, certificate, or reverse proxy required. See [Single-machine deployment](docs/deploy-single-machine.md).
+- **Split mode**: brain on a Linux server, hand on a separate Windows machine, communicating over HTTPS via a reverse proxy. See [Server-side deployment](docs/deploy-server.md).
+
 ## Positioning and Limitations
 
 This section states the boundaries of what the project is, and forms an integral part of its documentation.
@@ -87,7 +92,8 @@ python hand/fish_hand.py
 
 Deployment and configuration guides are currently maintained in Chinese:
 
-- [Server-side deployment](docs/deploy-server.md)
+- [Single-machine deployment (recommended)](docs/deploy-single-machine.md)
+- [Server-side deployment (split mode)](docs/deploy-server.md)
 - [Windows-side deployment](docs/deploy-windows.md)
 - [Configuration reference](docs/config.md)
 - [Troubleshooting](docs/troubleshooting.md)

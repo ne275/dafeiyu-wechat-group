@@ -31,6 +31,11 @@
 
 设计动因：个人微信的自动化接入在技术上仅有三类路线——协议模拟、客户端注入、UI 自动化。前两类分别面临平台风控与法律压力（已有多起下架与封禁先例）。UI 自动化不接触客户端内部状态，是三者中风险最低的一类，但其代价是必须维持一个真实 Windows 桌面会话。因此项目将计算与状态集中于服务器，Windows 端退化为无状态的哑终端，从而降低单点失效的修复成本。
 
+两种部署形态：
+
+- **单机模式（推荐）**：脑与手同机运行，鱼脑仅监听 `127.0.0.1`，不需要域名、证书与反向代理。见 [单机部署](docs/deploy-single-machine.md)。
+- **分体模式**：脑在 Linux 服务器、手在另一台 Windows 时，经反向代理以 HTTPS 通信。见 [服务器侧部署](docs/deploy-server.md)。
+
 ## 定位与局限
 
 本节是对项目能力边界的如实说明，构成本项目文档不可分割的一部分。
@@ -85,7 +90,8 @@ python hand/fish_hand.py
 
 ## 文档
 
-- [服务器侧部署](docs/deploy-server.md)
+- [单机部署（推荐）](docs/deploy-single-machine.md)
+- [服务器侧部署（分体模式）](docs/deploy-server.md)
 - [Windows 侧部署](docs/deploy-windows.md)
 - [配置参数参考](docs/config.md)
 - [故障排查](docs/troubleshooting.md)
