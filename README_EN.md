@@ -27,6 +27,7 @@ Run a DeepSeek-powered AI character ("Da Fei Yu", a community-created persona ba
 │  · memory + chat logs       │         │  · UI automation only    │
 │  · scheduled messages       │         │                          │
 └─────────────────────────────┘         └──────────────────────────┘
+Single-machine: http://127.0.0.1; Split mode: HTTPS + shared key
 ```
 
 Rationale: automating a personal WeChat account offers only three technical routes—protocol emulation, client injection, and UI automation. The first two face ongoing platform enforcement and legal pressure, with multiple public precedents of takedowns and bans. UI automation never touches client internals and is the lowest-risk option, at the cost of requiring a live Windows desktop session. The project therefore concentrates all computation and state on the server, reducing the Windows endpoint to a stateless dumb terminal and lowering the cost of recovery from any single-point failure.
@@ -97,6 +98,7 @@ Deployment and configuration guides are currently maintained in Chinese:
 - [Windows-side deployment](docs/deploy-windows.md)
 - [Configuration reference](docs/config.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Improvement guide (for contributors)](docs/improvements.md)
 
 ## Risks and Acceptable Use
 
