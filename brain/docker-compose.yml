@@ -1,0 +1,21 @@
+services:
+  brain:
+    build: .
+    container_name: dafeiyu-brain
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6190:6190"   # 只绑回环，经你自己的 nginx/caddy 反代暴露 HTTPS
+    volumes:
+      - ./data:/data            # 记忆、聊天日志持久化
+    environment:
+      FISH_KEY: ${FISH_KEY}                 # 与 hand/config.json 的 fish_key 一致
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      # 以下为可调参数（默认值已写出，可不设）
+      # FISH_MODEL: deepseek-flash
+      # FISH_ACTIVE_PERIOD: "600"           # 活跃周期秒数
+      # FISH_ACTIVE_ENTER_PROB: "0.05"      # 周期外每条消息唤醒概率
+      # FISH_ACTIVE_GAP: "25"               # 连续主动插话最小间隔（秒）
+      # FISH_ACTIVE_SKIP_LIMIT: "3"         # 连续跳过几次提前下头
+      # FISH_DAILY_CAP: "100"               # 每日发言保险丝
+      # FISH_SUMMARY_EVERY: "30"            # 每群每 N 条消息沉淀一次记忆
+      # FISH_OWNER: ""                      # 主人的群昵称（鱼对主人更亲）

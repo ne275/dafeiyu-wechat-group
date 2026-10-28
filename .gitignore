@@ -1,0 +1,10 @@
+# 配置与密钥
+hand/config.json
+.env
+*.key
+
+# 运行数据
+brain/data/
+__pycache__/
+*.pyc
+.DS_Store

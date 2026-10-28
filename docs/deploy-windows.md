@@ -1,0 +1,65 @@
+# Windows 侧部署（鱼手）
+
+鱼手跑在任何一台能装微信的 Windows 上：闲置 PC、挂机宝、云电脑、公司电脑（别）都行。
+本篇以"挂机宝"（廉价 Windows 云桌面）为例，全部来自真实部署记录。
+
+## 0. 选型建议
+
+- 配置：**2核4G** 起步（微信 4.x 是 Electron，2G 内存不够）
+- 系统：**Windows 10/11 或 Server 2016+**（微信 4.x 要求；很多挂机宝默认 Win2012，下单前确认）
+- 网络：**固定独立 IP**（共享/变动 IP 会连累微信风控），机房离小号常用登录地越近越好
+- 价格参考：挂机宝 ¥10-35/月，先日付试用一天再月付
+
+## 1. 装 Python
+
+- python.org 下载 3.12 安装包，**安装第一屏务必勾选 "Add python.exe to PATH"**
+- 验证：PowerShell 里 `python --version`
+
+## 2. 装依赖
+
+```powershell
+pip install wxauto4 requests -i https://pypi.tuna.tsinghua.edu.cn/simple
+```
+
+（国内机器直连 PyPI 经常超时，镜像源必备）
+
+## 3. 装钉版微信（关键）
+
+- **不要装官网最新版**。wxauto4 免费版目前支持到 **4.1.8.107**
+- 历史版本安装包：<https://github.com/SiverKing/wechat4.0-windows-versions/releases>
+- 安装 → 小号扫码登录 → **设置 → 通用设置 → 关闭"自动更新"**
+- 顺手勾上"开机自动启动微信"和"自动登录该设备"
+
+## 4. 配置并启动
+
+```powershell
+cd 下载目录
+# 把 config.example.json 复制为 config.json，填入：
+#   brain_url = https://你的域名/fish
+#   fish_key  = 服务器部署时的 FISH_KEY
+#   groups    = ["微信群名，一字不差"]
+python fish_hand.py
+```
+
+看到 `大肥鱼启动 | 监听群: [...]` 即成功。**窗口要一直开着。**
+
+## 5. 保活
+
+```powershell
+powercfg /change standby-timeout-ac 0
+powercfg /change monitor-timeout-ac 0
+```
+
+- 远程桌面断开时**直接点 ×，不要点"注销"**（注销会杀掉微信和脚本）
+- 想开机自启：把 `python fish_hand.py` 的快捷方式放进 `shell:startup`
+
+## 6. 小号的"账号底座"问题（必读）
+
+微信的机制：**手机端"切换账号/退出登录"会把该账号所有其他设备踢下线**。
+所以小号需要一个常驻底座，三选一：
+
+1. 安卓手机的"应用分身"功能（主号/小号同时在线）
+2. 一台闲置旧手机/iPad 常驻登录小号
+3. Mac/PC 上的安卓模拟器（有风控概率，五五分）
+
+没有底座的话，每次手机切号鱼都会掉线，需要重新扫码。

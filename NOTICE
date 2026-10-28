@@ -1,0 +1,21 @@
+归属与致谢
+==========
+
+本项目包含改编自以下开源项目的内容：
+
+1. whyever77/dafeiyu-astrbot
+   https://github.com/whyever77/dafeiyu-astrbot
+   - brain/persona.txt 改编自其 persona/大肥鱼-人格.md（v2.1，QQ 版 → 微信文本版适配：
+     移除了 QQ 专属的工具调用、语音、虚拟手机等章节，保留人格核心）
+   - brain/memes.txt 来自其 docs/知识库-热梗词典示例.md
+   - "出站橡皮擦"、身份标记、引用唤醒、定时冒泡配方等设计灵感亦来自该项目
+
+2. SAKURAfan1023/dafeiyu-bot
+   https://github.com/SAKURAfan1023/dafeiyu-bot
+   - 短句硬上限、每 N 条评估等回复策略参考
+
+3. wxauto（cluic）
+   https://docs.wxauto.org
+   - hand/ 依赖的 Windows UI 自动化库，请遵守其可接受使用政策
+
+"大肥鱼"形象为 DeepSeek 蓝鲸 logo 的社区二创（非官方），本项目与 DeepSeek、腾讯无关。
