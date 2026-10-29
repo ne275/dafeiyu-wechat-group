@@ -23,16 +23,19 @@ SUMMARY_EVERY = int(os.environ.get("FISH_SUMMARY_EVERY", "30"))            # 每
 HISTORY_LEN = 12          # 喂给模型的最近消息条数
 SUMMARY_BUF_LEN = 40      # 记忆沉淀用的缓冲条数
 OWNER = os.environ.get("FISH_OWNER", "")  # 主人的微信昵称（鱼对他更亲）
-DATA_DIR = Path("/data")
+BASE_DIR = Path(__file__).parent
+DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-PERSONA = open("/app/persona.txt", encoding="utf-8").read()
-MEMES = open("/app/memes.txt", encoding="utf-8").read() if Path("/app/memes.txt").exists() else ""
+PERSONA = (BASE_DIR / "persona.txt").read_text(encoding="utf-8")
+_memes_path = BASE_DIR / "memes.txt"
+MEMES = _memes_path.read_text(encoding="utf-8") if _memes_path.exists() else ""
 
 app = FastAPI(title="dafeiyu-brain", version="3")
 history: dict[str, deque] = defaultdict(lambda: deque(maxlen=HISTORY_LEN))
 summary_buf: dict[str, deque] = defaultdict(lambda: deque(maxlen=SUMMARY_BUF_LEN))
 active_until: dict[str, float] = {}
+waiting: dict[str, bool] = {}              # 判官说"等等"的群：下一条消息强制重判
 last_active_reply: dict[str, float] = {}   # 主动插话的最小间隔
 ACTIVE_GAP_SEC = int(os.environ.get("FISH_ACTIVE_GAP", "25"))
 skip_streak: dict[str, int] = defaultdict(int)
@@ -122,20 +125,34 @@ def system_prompt(group: str) -> str:
     return "\n\n".join(parts)
 
 
+def sender_profile(group: str, sender: str) -> str | None:
+    """当前说话人的人物画像（记忆里有才返回）。"""
+    return memory["groups"].get(group, {}).get("members", {}).get(sender)
+
+
 # ---------- 记忆沉淀 ----------
 async def summarize_group(group: str):
+    """记忆沉淀：群话题摘要 + 每位成员的独立画像档案。"""
     buf = list(summary_buf[group])
     if not buf:
         return
-    old = memory["groups"].get(group, {}).get("summary", "（还没有记忆）")
+    gm = memory["groups"].setdefault(group, {})
+    old_summary = gm.get("summary", "（还没有记忆）")
+    old_members = json.dumps(gm.get("members", {}), ensure_ascii=False)
     lines = "\n".join(f"{m['sender']}: {m['text']}" for m in buf)
     try:
-        new = await call_deepseek(
-            "你是一个记忆整理器。基于旧记忆和新聊天记录，输出更新后的记忆，150 字以内。"
-            "格式：【近期话题】一两句；【成员印象】每个活跃成员一句话（昵称：印象）。只输出记忆本身。",
-            f"【旧记忆】\n{old}\n\n【新聊天记录】\n{lines}")
-        memory["groups"].setdefault(group, {})["summary"] = new
-        memory["groups"][group]["since"] = 0
+        raw = await call_deepseek(
+            "你是一个记忆整理器。基于旧记忆和新聊天记录，输出更新后的记忆。\n"
+            "严格输出 JSON（不要输出其他内容）：\n"
+            '{"topics": "近期话题一两句", "members": {"昵称": "一句话印象（说话风格、喜好、与群的关系）"}}\n'
+            "members 只包含新记录里活跃的人；旧画像里没有变化的保留；有新发现就更新。",
+            f"【旧记忆】话题：{old_summary}\n成员：{old_members}\n\n【新聊天记录】\n{lines}")
+        data = json.loads(raw.strip().removeprefix("```json").removesuffix("```").strip())
+        gm["summary"] = data.get("topics", old_summary)
+        members = gm.setdefault("members", {})
+        for name, impression in data.get("members", {}).items():
+            members[name] = impression
+        gm["since"] = 0
         save_memory()
     except Exception:
         pass
@@ -155,6 +172,8 @@ def decide_reply(msg: GroupMessage) -> str | None:
         skip_streak[msg.group] = 0
         return "mention"
     if now < active_until.get(msg.group, 0):
+        if waiting.pop(msg.group, False):
+            return "active"  # 上轮判官说"等等"：新消息来了，带着更多上下文重判
         if now - last_active_reply.get(msg.group, 0) < ACTIVE_GAP_SEC:
             return None  # 主动插话的最小间隔，防刷屏
         return "active"
@@ -169,6 +188,9 @@ async def compose_reply(msg: GroupMessage, mode: str) -> str | None:
     context = "\n".join(lines) if lines else "（群里刚才没人说话）"
     sender_tag = f"{msg.sender}（主人）" if OWNER and msg.sender == OWNER else msg.sender
     bare = msg.text.strip().strip("@").strip("？?！!。 ")
+    profile = sender_profile(msg.group, msg.sender)
+    if profile:
+        context += f"\n\n【你对 {msg.sender} 的印象】{profile}"
     if mode == "mention":
         if bare == "大肥鱼":
             user = f"【群聊记录】\n{context}\n\n{sender_tag} 喊了你一声，没说话。自然地应一声。"
@@ -177,8 +199,10 @@ async def compose_reply(msg: GroupMessage, mode: str) -> str | None:
     else:
         user = (f"【群聊记录】（其中“大肥鱼:”开头的是你自己刚说过的话，别再重复同一个意思）\n{context}\n\n"
                 f"最新消息是 {sender_tag} 说的：{msg.text}\n"
-                "没人叫你。你判断一下：这句话值不值得你插一句嘴？"
-                "值得就短促地插一句（一两句以内）；如果你最近已经说过类似的意思，或者不值得接，就只回复两个字：跳过。")
+                "没人叫你。你有三个选择：\n"
+                "1. 值得插一句 → 短促地插一句（一两句以内）\n"
+                "2. 对方可能话没说完（比如只发了“在吗”）→ 只回复两个字：等等\n"
+                "3. 不值得接，或你最近说过类似意思 → 只回复两个字：跳过")
     answer = await call_deepseek(system_prompt(msg.group), user)
     answer = outbound_eraser(answer)
     # 超长压缩（草稿+校对）
@@ -206,6 +230,9 @@ async def group_message(msg: GroupMessage, x_fish_key: str = Header(default=""))
         return {"reply": None}
     answer = await compose_reply(msg, mode)
     if mode == "active":
+        if answer is not None and answer.strip() == "等等":
+            waiting[msg.group] = True  # 下一条消息强制重判
+            return {"reply": None}
         if answer is None or "跳过" in answer:
             skip_streak[msg.group] += 1
             if skip_streak[msg.group] >= ACTIVE_SKIP_LIMIT:
