@@ -112,9 +112,10 @@ def main():
     mode = "影子模式（不发送）" if DRY_RUN else "正式模式"
     log(f"大肥鱼启动 | {mode} | 监听群: {GROUPS} | 每 {POLL_INTERVAL}s 轮询")
     wx = WeChat()
-    # 去重键用内容签名（发送者|类型|内容），不用 UI id——
-    # 微信 4.x 重渲染后 id 会重新分配，id 去重会把新消息误判为已见
-    seen = {g: deque(maxlen=50) for g in GROUPS}
+    # 新旧消息用「水位线」判断：记住上一条处理过的消息签名，
+    # 每轮从列表末尾找它的位置，只处理它后面的。重复内容随便发，互不干扰；
+    # 重渲染导致旧消息 id 变化也不影响（签名不含 id）
+    last_sig = {g: None for g in GROUPS}
     first_run = {g: True for g in GROUPS}
     watch = {}  # group -> {"reply": str, "deadline": float, "reactions": list}
     last_counts = {}  # 心跳：各群读到的消息数，变化时打印
@@ -147,14 +148,31 @@ def main():
                 if len(msgs) != last_counts.get(group, -1):
                     log(f"【{group}】读取到 {len(msgs)} 条消息")
                     last_counts[group] = len(msgs)
-                if first_run[group]:
+                def sig(m):
+                    return f"{getattr(m, 'attr', '?')}|{getattr(m, 'sender', '?')}|{m.type}|{getattr(m, 'content', '')[:80]}"
+
+                if first_run[group] or last_sig[group] is None:
                     log(f"【{group}】首轮登记 {len(msgs)} 条历史消息（不回复）")
-                for m in msgs:
-                    key = f"{getattr(m, 'sender', '?')}|{m.type}|{getattr(m, 'content', '')}"
-                    if key in seen[group]:
-                        continue
-                    seen[group].append(key)
-                    if first_run[group] or m.attr != "friend":
+                    if msgs:
+                        last_sig[group] = sig(msgs[-1])
+                    first_run[group] = False
+                    continue
+
+                # 从末尾找水位线位置，只处理它后面的消息
+                idx = -1
+                for i in range(len(msgs) - 1, -1, -1):
+                    if sig(msgs[i]) == last_sig[group]:
+                        idx = i
+                        break
+                if idx < 0:
+                    log(f"【{group}】水位线丢失，重新锚定（期间消息可能漏过）")
+                    last_sig[group] = sig(msgs[-1]) if msgs else last_sig[group]
+                    continue
+                new_msgs = msgs[idx + 1:]
+                if new_msgs:
+                    last_sig[group] = sig(new_msgs[-1])
+                for m in new_msgs:
+                    if m.attr != "friend":
                         continue
                     text = describe(m)
                     if not text:
