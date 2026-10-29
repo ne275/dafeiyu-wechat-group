@@ -27,9 +27,36 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-BRAIN_VERSION = "4.2"  # 行为修改必须递增——/fish/health 里可验证
+BRAIN_VERSION = "4.3"  # 行为修改必须递增——/fish/health 里可验证
 
-PERSONA = (BASE_DIR / "persona.txt").read_text(encoding="utf-8")
+# 人格库：personas/<name>.txt；选择持久化在 data/persona_select.json，支持热切换
+PERSONA_DIR = BASE_DIR / "personas"
+DEFAULT_PERSONA = os.environ.get("FISH_PERSONA", "default")
+_persona_cache: dict = {}
+
+
+def persona_name() -> str:
+    sel = DATA_DIR / "persona_select.json"
+    if sel.exists():
+        try:
+            return json.loads(sel.read_text(encoding="utf-8"))["name"]
+        except Exception:
+            pass
+    return DEFAULT_PERSONA
+
+
+def get_persona() -> str:
+    name = persona_name()
+    path = PERSONA_DIR / f"{name}.txt"
+    if not path.exists():  # 向后兼容：旧单文件 persona.txt
+        path = BASE_DIR / "persona.txt"
+    mtime = path.stat().st_mtime
+    if _persona_cache.get("name") != name or _persona_cache.get("mtime") != mtime:
+        _persona_cache.update({"name": name, "mtime": mtime, "text": path.read_text(encoding="utf-8")})
+    return _persona_cache["text"]
+
+
+PERSONA = None  # 已被人格库取代（保留符号防旧引用报错）
 _memes_path = BASE_DIR / "memes.txt"
 MEMES = _memes_path.read_text(encoding="utf-8") if _memes_path.exists() else ""
 
@@ -252,7 +279,7 @@ async def call_deepseek(system: str, user: str) -> str:
 
 
 def system_prompt(group: str) -> str:
-    parts = [PERSONA]
+    parts = [get_persona()]
     if MEMES:
         parts.append(MEMES)
     learned = memory.get("jargon", {})
@@ -578,6 +605,30 @@ def board():
         from fastapi.responses import HTMLResponse
         return HTMLResponse(html.read_text(encoding="utf-8"))
     raise HTTPException(status_code=404, detail="board.html not found")
+
+
+@app.get("/fish/persona")
+def list_personas(x_fish_key: str = Header(default="")):
+    if x_fish_key != FISH_KEY:
+        raise HTTPException(status_code=403)
+    available = sorted(p.stem for p in PERSONA_DIR.glob("*.txt")) if PERSONA_DIR.exists() else []
+    return {"current": persona_name(), "available": available}
+
+
+class PersonaSelect(BaseModel):
+    name: str
+
+
+@app.post("/fish/persona")
+def switch_persona(sel: PersonaSelect, x_fish_key: str = Header(default="")):
+    if x_fish_key != FISH_KEY:
+        raise HTTPException(status_code=403)
+    if not (PERSONA_DIR / f"{sel.name}.txt").exists():
+        raise HTTPException(status_code=404, detail=f"人格 {sel.name} 不存在")
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    (DATA_DIR / "persona_select.json").write_text(
+        json.dumps({"name": sel.name}, ensure_ascii=False), encoding="utf-8")
+    return {"current": sel.name, "note": "立即生效，无需重启"}
 
 
 @app.get("/fish/health")

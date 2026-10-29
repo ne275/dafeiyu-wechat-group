@@ -77,6 +77,9 @@ This section states the boundaries of what the project is, and forms an integral
 | Effect tracking | Observes group reactions after speaking and feeds them into future decisions |
 | Jargon learning | Daily log scan for new slang; adopted only after two sightings |
 | Testing | Real-log replay + shadow mode (dry_run) — iterate without disturbing the group |
+| Preview shortcut | Complete short messages skip the chat window entirely; only truncated/@ paths pay the render cost |
+| Media silence | Image/sticker/video placeholders are skipped outright — the bot never comments on what it cannot see |
+| Auto-ops | start.bat one-click full update + watchdog (restart on crash, kill on heartbeat timeout) |
 | Chat logs | Persistent per-chat, per-date records (JSONL) with a query API |
 | Safeguards | Daily utterance cap, minimum proactive-speech interval, shared-key API authentication |
 
@@ -100,11 +103,13 @@ python hand/fish_hand.py
 
 Deployment and configuration guides are currently maintained in Chinese:
 
+- [Architecture & current mode](docs/architecture.md)
 - [Single-machine deployment (recommended)](docs/deploy-single-machine.md)
 - [Server-side deployment (split mode)](docs/deploy-server.md)
 - [Windows-side deployment](docs/deploy-windows.md)
 - [Configuration reference](docs/config.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Testing](docs/testing.md)
 - [Improvement guide (for contributors)](docs/improvements.md)
 
 ## Risks and Acceptable Use

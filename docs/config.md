@@ -37,5 +37,15 @@
 
 ## 人格与热梗
 
-- `brain/persona.txt`：人格卡，改完 `docker compose up -d --build` 生效
+- `brain/personas/`：人格库，每个文件一个人格。当前内置：
+  - `default.txt`：松弛群友风（零缓冲、去 AI 味）
+  - `cute.txt`：20 岁清纯女大学生气质的鲸鱼娘（清爽略萌不幼态）
 - `brain/memes.txt`：热梗词典，定期更新保持"听得懂新话"
+- 运行中切换（立即生效，无需重启）：
+  ```bash
+  curl -X POST https://你的域名/fish/persona \
+    -H "X-Fish-Key: $FISH_KEY" -H "Content-Type: application/json" \
+    -d '{"name": "cute"}'
+  ```
+  查看当前与可选：`GET /fish/persona`。选择持久化在 data/persona_select.json。
+- 新增人格：往 personas/ 丢一个 .txt 文件即可被列表发现。
