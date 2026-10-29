@@ -1,7 +1,7 @@
 @echo off
 REM disconnect-safe: hand this session to the console before closing RDP.
 REM Must run as Administrator (right-click -> Run as administrator if this says NO).
-net session >nul 2>&1
+fltmc >nul 2>&1
 if %errorlevel% neq 0 (
   echo [ERROR] Not administrator. Right-click this file -^> Run as administrator.
   pause
