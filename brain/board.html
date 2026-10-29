@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>大肥鱼 · 控制面板</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { background:#0d1117; color:#c9d1d9; font-family: ui-monospace, monospace; margin:0; padding:24px; }
+  h1 { color:#58a6ff; font-size:20px; }
+  .cards { display:grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap:12px; margin:16px 0; }
+  .card { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:14px; }
+  .card .num { font-size:28px; color:#7ee787; }
+  .card .label { font-size:12px; color:#8b949e; margin-top:4px; }
+  #groups { margin-top:20px; }
+  .group { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:12px; margin:8px 0; font-size:13px; }
+  #authbar { margin-bottom:16px; }
+  input { background:#0d1117; border:1px solid #30363d; color:#c9d1d9; padding:6px 10px; border-radius:6px; }
+  button { background:#238636; border:none; color:#fff; padding:6px 14px; border-radius:6px; cursor:pointer; }
+  .dim { color:#8b949e; font-size:12px; }
+</style>
+</head>
+<body>
+<h1>🐟 大肥鱼 · 控制面板</h1>
+<div id="authbar">
+  <input id="key" type="password" placeholder="FISH_KEY" size="40">
+  <button onclick="save()">连接</button>
+  <span id="status" class="dim"></span>
+</div>
+<div class="cards">
+  <div class="card"><div class="num" id="replies">-</div><div class="label">今日发言</div></div>
+  <div class="card"><div class="num" id="mentions">-</div><div class="label">被叫应答</div></div>
+  <div class="card"><div class="num" id="actives">-</div><div class="label">主动插话</div></div>
+  <div class="card"><div class="num" id="avg">-</div><div class="label">平均延迟 ms</div></div>
+  <div class="card"><div class="num" id="p95">-</div><div class="label">P95 延迟 ms</div></div>
+  <div class="card"><div class="num" id="jargon">-</div><div class="label">学会黑话</div></div>
+</div>
+<h1>活跃与记忆</h1>
+<div id="groups"><span class="dim">尚无数据</span></div>
+<div class="dim" style="margin-top:16px">每 10 秒自动刷新 · 数据来自 /fish/stats</div>
+<script>
+const keyInput = document.getElementById('key');
+keyInput.value = localStorage.getItem('fish_key') || '';
+function save() { localStorage.setItem('fish_key', keyInput.value); load(); }
+async function load() {
+  const key = keyInput.value;
+  if (!key) return;
+  try {
+    const r = await fetch('stats', {headers: {'X-Fish-Key': key}});
+    if (r.status !== 200) { document.getElementById('status').textContent = ' 连接失败 ' + r.status; return; }
+    const d = await r.json();
+    document.getElementById('status').textContent = ' 已连接 · ' + d.today;
+    document.getElementById('replies').textContent = d.replies;
+    document.getElementById('mentions').textContent = d.mentions;
+    document.getElementById('actives').textContent = d.actives;
+    document.getElementById('avg').textContent = d.latency_avg_ms;
+    document.getElementById('p95').textContent = d.latency_p95_ms;
+    document.getElementById('jargon').textContent = d.jargon_learned;
+    const g = document.getElementById('groups');
+    const act = Object.entries(d.active_groups || {});
+    const mems = d.memory_groups || [];
+    g.innerHTML = '';
+    for (const name of mems) {
+      const div = document.createElement('div');
+      div.className = 'group';
+      const active = act.find(([k]) => k === name);
+      div.innerHTML = '<b>' + name + '</b>' + (active ? ' <span style="color:#7ee787">● 活跃中（剩 ' + active[1] + 's）</span>' : '');
+      g.appendChild(div);
+    }
+    if (!mems.length) g.innerHTML = '<span class="dim">尚无数据</span>';
+  } catch (e) { document.getElementById('status').textContent = ' 错误: ' + e; }
+}
+load(); setInterval(load, 10000);
+</script>
+</body>
+</html>

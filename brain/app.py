@@ -184,6 +184,16 @@ async def planner_active(msg: GroupMessage, context: str, sender_tag: str) -> tu
     return "reply", outbound_eraser(final)
 
 
+# ---------- 指标 ----------
+def record_stats(mode: str, latency_ms: int, llm_ms: int):
+    today = time.strftime("%F")
+    st = memory.setdefault("stats", {}).setdefault(today, {"replies": 0, "mentions": 0, "actives": 0, "latencies": []})
+    st["replies"] += 1
+    st["mentions" if mode == "mention" else "actives"] += 1
+    st["latencies"].append({"total": latency_ms, "llm": llm_ms})
+    save_memory()
+
+
 # ---------- 出站橡皮擦 ----------
 META_PATTERNS = [
     "作为AI", "作为人工智能", "作为一个人工智能", "AI助手", "作为语言模型",
@@ -374,6 +384,7 @@ def build_active_context(msg: GroupMessage) -> tuple[str, str]:
 async def group_message(msg: GroupMessage, x_fish_key: str = Header(default="")):
     if x_fish_key != FISH_KEY:
         raise HTTPException(status_code=403)
+    t0 = time.time()
     mode = decide_reply(msg)
     log_chat(msg.group, {"sender": msg.sender, "text": msg.text, "mention": msg.mention, "mode": mode})
     history[msg.group].append({"sender": msg.sender, "text": msg.text})
@@ -385,11 +396,15 @@ async def group_message(msg: GroupMessage, x_fish_key: str = Header(default=""))
     if mode is None:
         return {"reply": None}
     if mode == "mention":
+        t_llm = time.time()
         answer = await compose_reply(msg, mode)
+        llm_ms = int((time.time() - t_llm) * 1000)
     else:
         # active：Planner 工具循环
         context, sender_tag = build_active_context(msg)
+        t_llm = time.time()
         action, answer = await planner_active(msg, context, sender_tag)
+        llm_ms = int((time.time() - t_llm) * 1000)
         if action == "wait":
             waiting[msg.group] = True  # 下一条消息强制重判
             return {"reply": None}
@@ -405,8 +420,11 @@ async def group_message(msg: GroupMessage, x_fish_key: str = Header(default=""))
     if mode == "active":
         last_active_reply[msg.group] = time.time()
     daily_count[time.strftime("%F")] += 1
+    latency_ms = int((time.time() - t0) * 1000)
+    record_stats(mode, latency_ms, llm_ms)
     history[msg.group].append({"sender": "大肥鱼", "text": answer})
-    log_chat(msg.group, {"sender": "大肥鱼", "text": answer, "mode": mode})
+    log_chat(msg.group, {"sender": "大肥鱼", "text": answer, "mode": mode,
+                         "latency_ms": latency_ms, "llm_ms": llm_ms})
     return {"reply": answer, "mode": mode, "parts": split_bubbles(answer)}
 
 
@@ -526,6 +544,38 @@ def get_outbox(group: str = Query(...), x_fish_key: str = Header(default="")):
     msgs = outbox[group][:]
     outbox[group].clear()
     return {"messages": msgs}
+
+
+@app.get("/fish/stats")
+def get_stats(x_fish_key: str = Header(default="")):
+    """控制面板数据：今日指标 + 延迟分布 + 各群状态。"""
+    if x_fish_key != FISH_KEY:
+        raise HTTPException(status_code=403)
+    today = time.strftime("%F")
+    st = memory.get("stats", {}).get(today, {"replies": 0, "mentions": 0, "actives": 0, "latencies": []})
+    lats = [x["total"] for x in st.get("latencies", [])]
+    lats_sorted = sorted(lats)
+    p95 = lats_sorted[int(len(lats_sorted) * 0.95)] if lats_sorted else 0
+    return {
+        "today": today,
+        "replies": st.get("replies", 0),
+        "mentions": st.get("mentions", 0),
+        "actives": st.get("actives", 0),
+        "latency_avg_ms": round(sum(lats) / len(lats)) if lats else 0,
+        "latency_p95_ms": p95,
+        "active_groups": {g: round(t - time.time()) for g, t in active_until.items() if t > time.time()},
+        "memory_groups": list(memory["groups"].keys()),
+        "jargon_learned": len(memory.get("jargon", {})),
+    }
+
+
+@app.get("/fish/board")
+def board():
+    html = (BASE_DIR / "board.html")
+    if html.exists():
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(html.read_text(encoding="utf-8"))
+    raise HTTPException(status_code=404, detail="board.html not found")
 
 
 @app.get("/fish/health")
