@@ -115,28 +115,33 @@ TOOLS = [
 
 
 async def call_deepseek_tools(messages: list) -> dict:
-    async with httpx.AsyncClient(timeout=60) as cli:
-        resp = await cli.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
-            json={"model": MODEL, "messages": messages,
-                  "tools": TOOLS, "tool_choice": "auto"},
-        )
-        resp.raise_for_status()
-        return resp.json()
+    resp = await deepseek_client().post(
+        "https://api.deepseek.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
+        json={"model": MODEL, "messages": messages,
+              "tools": TOOLS, "tool_choice": "auto"},
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 async def planner_active(msg: GroupMessage, context: str, sender_tag: str) -> tuple[str, str | None]:
-    """主动插话的 Planner 循环。返回 (action, text)，action ∈ reply/skip/wait。"""
+    """主动插话的 Planner 循环。返回 (action, text)，action ∈ reply/skip/wait。
+    判断用瘦 prompt（不带人格卡/热梗，省 prefill）；决定说话后再用完整人格生成。"""
+    judge_system = (
+        "你在替一个群聊机器人做判断：群里每条消息决定【接话 / 沉默 / 等对方说完】。\n"
+        "原则：不每条都接；对方半截话就等；和你无关的闲聊多数沉默。\n"
+        + (f"【这个群的近期话题】\n{memory['groups'].get(msg.group, {}).get('summary')}\n\n"
+           if memory["groups"].get(msg.group, {}).get("summary") else ""))
     messages = [
-        {"role": "system", "content": system_prompt(msg.group)},
+        {"role": "system", "content": judge_system},
         {"role": "user", "content": (
-            f"【群聊记录】（其中“大肥鱼:”开头的是你自己刚说过的话）\n{context}\n\n"
+            f"【群聊记录】（其中“大肥鱼:”开头的是机器人自己刚说过的）\n{context}\n\n"
             f"最新消息是 {sender_tag} 说的：{msg.text}\n"
-            "没人叫你。你现在处于自主判断模式：可以用 query_profile / query_memory 查背景，"
-            "然后必须做最终动作：reply（插一句）/ skip（沉默）/ wait（等对方说完）。"
-            "最多用 3 次查询工具。不要重复自己刚说过的意思。")},
+            "判断后必须做最终动作：reply（给出要说的大意）/ skip / wait。"
+            "最多用 3 次查询工具。")},
     ]
+    draft = None
     for _ in range(3):
         try:
             resp = await call_deepseek_tools(messages)
@@ -149,13 +154,15 @@ async def planner_active(msg: GroupMessage, context: str, sender_tag: str) -> tu
                 return "skip", None
             if content == "等等":
                 return "wait", None
-            return "reply", outbound_eraser(content)
+            draft = content
+            break
         messages.append(m)
         for tc in m["tool_calls"]:
             name = tc["function"]["name"]
             args = json.loads(tc["function"].get("arguments") or "{}")
             if name == "reply":
-                return "reply", outbound_eraser(args.get("text", ""))
+                draft = args.get("text", "")
+                break
             if name == "skip":
                 return "skip", None
             if name == "wait":
@@ -165,7 +172,16 @@ async def planner_active(msg: GroupMessage, context: str, sender_tag: str) -> tu
             else:  # query_memory
                 result = memory["groups"].get(msg.group, {}).get("summary") or "（还没有记忆）"
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
-    return "skip", None
+        if draft is not None:
+            break
+    if draft is None:
+        return "skip", None
+    # 决定说了→用完整人格生成正式发言
+    final = await call_deepseek(
+        system_prompt(msg.group),
+        f"【群聊记录】\n{context}\n\n{sender_tag} 刚说：{msg.text}\n"
+        f"你决定插一句话，大意是：{draft}\n用你的口吻写出来，一两句以内，可以按 [[next]] 连发。")
+    return "reply", outbound_eraser(final)
 
 
 # ---------- 出站橡皮擦 ----------
@@ -200,17 +216,27 @@ def outbound_eraser(text: str) -> str:
 
 
 # ---------- DeepSeek ----------
+# 共享连接池：省掉每次调用的 TCP+TLS 握手（异地 0.5-1s）
+_shared_client: httpx.AsyncClient | None = None
+
+
+def deepseek_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient(timeout=60, limits=httpx.Limits(max_keepalive_connections=4))
+    return _shared_client
+
+
 async def call_deepseek(system: str, user: str) -> str:
-    async with httpx.AsyncClient(timeout=60) as cli:
-        resp = await cli.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
-            json={"model": MODEL,
-                  "messages": [{"role": "system", "content": system},
-                               {"role": "user", "content": user}]},
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
+    resp = await deepseek_client().post(
+        "https://api.deepseek.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
+        json={"model": MODEL,
+              "messages": [{"role": "system", "content": system},
+                           {"role": "user", "content": user}]},
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"].strip()
 
 
 def system_prompt(group: str) -> str:
