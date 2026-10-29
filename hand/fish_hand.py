@@ -19,6 +19,7 @@ FISH_KEY = _cfg["fish_key"]
 GROUPS = _cfg["groups"]
 BOT_NAME = _cfg.get("bot_name", "大肥鱼")
 POLL_INTERVAL = _cfg.get("poll_interval", 3)
+DRY_RUN = _cfg.get("dry_run", False)  # 影子模式：思考但不对微信发送
 
 
 def log(*a):
@@ -67,8 +68,17 @@ def describe(m):
     return None
 
 
+def send(wx, group, text, at=None):
+    """发送出口。dry_run 下只打印不发送。"""
+    if DRY_RUN:
+        log(f"  [影子] 鱼想说: {text[:80]}")
+        return
+    wx.SendMsg(text, who=group, at=at)
+
+
 def main():
-    log(f"大肥鱼启动 | 监听群: {GROUPS} | 每 {POLL_INTERVAL}s 轮询")
+    mode = "影子模式（不发送）" if DRY_RUN else "正式模式"
+    log(f"大肥鱼启动 | {mode} | 监听群: {GROUPS} | 每 {POLL_INTERVAL}s 轮询")
     wx = WeChat()
     seen = {g: set() for g in GROUPS}
     first_run = {g: True for g in GROUPS}
@@ -79,7 +89,7 @@ def main():
                 for msg in fetch_outbox(group):
                     log(f"【{group}】定时冒泡: {msg[:40]}")
                     wx.ChatWith(group)
-                    wx.SendMsg(msg, who=group)
+                    send(wx, group, msg)
                     time.sleep(2)
 
                 wx.ChatWith(group)
@@ -111,7 +121,7 @@ def main():
                     reply = resp.get("reply")
                     if reply:
                         log(f"  → 鱼回复({resp.get('mode')}): {reply[:50]}")
-                        wx.SendMsg(reply, who=group, at=m.sender)
+                        send(wx, group, reply, at=m.sender)
                         time.sleep(2)
                     else:
                         log("  → 鱼选择沉默")
