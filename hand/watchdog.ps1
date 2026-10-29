@@ -2,8 +2,26 @@
 # 用法：powershell -File watchdog.ps1（建议放入开机自启，见 docs/deploy-windows.md）
 $Hand = Join-Path $PSScriptRoot "fish_hand.py"
 $Heartbeat = Join-Path $PSScriptRoot "fish_heartbeat"
+$UpdateUrl = "https://你的域名/dl/fish_hand.py"   # 鱼手更新源（见 docs 部署篇）
 $StaleSec = 150          # 心跳超过这么久没更新视为卡死
 $CheckEvery = 15         # 看门狗巡视间隔（秒）
+
+function Update-Hand {
+    # 拉起前自动更新鱼手（下载失败用本地现有版本，不阻断启动）
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $tmp = Join-Path $env:TEMP "fish_hand_latest.py"
+        Invoke-WebRequest -Uri $UpdateUrl -OutFile $tmp -TimeoutSec 30
+        $newHash = (Get-FileHash $tmp).Hash
+        $oldHash = if (Test-Path $Hand) { (Get-FileHash $Hand).Hash } else { "" }
+        if ($newHash -ne $oldHash) {
+            Copy-Item $tmp $Hand -Force
+            wlog "鱼手已更新到最新版"
+        }
+    } catch {
+        wlog "更新检查失败（用现有版本继续）: $($_.Exception.Message)"
+    }
+}
 
 $LogFile = Join-Path $PSScriptRoot "watchdog.log"
 
@@ -43,6 +61,7 @@ function wlog($msg) {
 
 wlog "看门狗上线，监视 $Hand"
 while ($true) {
+    Update-Hand
     if (Test-Path $Heartbeat) { Remove-Item $Heartbeat -Force }
     $p = Start-Process python -ArgumentList "`"$Hand`"" -PassThru -WorkingDirectory $PSScriptRoot
     wlog "鱼手启动 PID=$($p.Id)"

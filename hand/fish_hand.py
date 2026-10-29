@@ -263,8 +263,8 @@ def main():
                     log(f"【{group}】效果追踪：鱼说「{w['reply'][:30]}」后 60s 内有 {n} 条反应")
                     report_effect(group, w["reply"], w["reactions"])
             except Exception:
-                log(f"【{group}】轮询出错:")
-                traceback.print_exc()
+                # 进日志文件，而不只是控制台 stderr
+                log(f"【{group}】轮询出错: {traceback.format_exc().strip().splitlines()[-1]}")
             elapsed = time.time() - cycle_start
             pt.report_slow()
             if elapsed > 20:
