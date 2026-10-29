@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-BRAIN_VERSION = "4.3"  # 行为修改必须递增——/fish/health 里可验证
+BRAIN_VERSION = "4.4"  # 行为修改必须递增——/fish/health 里可验证
 
 # 人格库：personas/<name>.txt；选择持久化在 data/persona_select.json，支持热切换
 PERSONA_DIR = BASE_DIR / "personas"
@@ -111,6 +111,7 @@ class GroupMessage(BaseModel):
     sender: str
     text: str
     mention: bool = False   # fish_hand 检测到"引用了鱼"时置真
+    image_b64: str = ""     # 可选：消息附带图片的 base64（视觉理解）
 
 
 class EffectReport(BaseModel):
@@ -233,8 +234,17 @@ META_PATTERNS = [
 
 
 def split_bubbles(text: str) -> list[str]:
-    """按 [[next]] 协议拆成多条气泡（鱼的连发节奏）。"""
-    parts = [p.strip() for p in re.split(r"\[\[next\]\]", text) if p.strip()]
+    """拆成多条气泡：[[next]] 协议 + 裸换行（模型偶尔不用协议直接换行）。
+    代码块（``` 包围）保持整体不拆。"""
+    parts = []
+    for chunk in re.split(r"\[\[next\]\]", text):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "```" in chunk:
+            parts.append(chunk)  # 代码块不拆
+        else:
+            parts.extend(l.strip() for l in chunk.splitlines() if l.strip())
     return parts or ([text] if text else [])
 
 
@@ -266,13 +276,21 @@ def deepseek_client() -> httpx.AsyncClient:
     return _shared_client
 
 
-async def call_deepseek(system: str, user: str) -> str:
+async def call_deepseek(system: str, user: str, image_b64: str = "") -> str:
+    """调用 DeepSeek。image_b64 非空时走多模态消息（模型需支持图片输入）。"""
+    if image_b64:
+        user_content = [
+            {"type": "text", "text": user},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+        ]
+    else:
+        user_content = user
     resp = await deepseek_client().post(
         "https://api.deepseek.com/v1/chat/completions",
         headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
         json={"model": MODEL,
               "messages": [{"role": "system", "content": system},
-                           {"role": "user", "content": user}]},
+                           {"role": "user", "content": user_content}]},
     )
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"].strip()
@@ -331,8 +349,9 @@ def decide_reply(msg: GroupMessage) -> str | None:
     if daily_count[time.strftime("%F")] >= DAILY_CAP:
         return None
     now = time.time()
-    # 占位消息（图/表情/语音等）只进上下文，不触发主动接话
-    if msg.text.startswith("[对方发来"):
+    # 占位消息（图/表情/语音等）只进上下文，不触发主动接话；
+    # 但带真实图片的（image_b64 非空）可以正常评估
+    if msg.text.startswith("[对方发来") and not msg.image_b64:
         return None
     bare = msg.text.strip().strip("@").strip("？?！!。 ") 
     if msg.mention or "大肥鱼" in msg.text:
@@ -376,7 +395,9 @@ async def compose_reply(msg: GroupMessage, mode: str) -> str | None:
                 "1. 值得插一句 → 短促地插一句（一两句以内）\n"
                 "2. 对方可能话没说完（比如只发了“在吗”）→ 只回复两个字：等等\n"
                 "3. 不值得接，或你最近说过类似意思 → 只回复两个字：跳过")
-    answer = await call_deepseek(system_prompt(msg.group), user)
+    if msg.image_b64:
+        user += "\n\n（这条消息带一张图片，就在上面，你看得到它。根据图片内容自然地回应，别描述得太正式。）"
+    answer = await call_deepseek(system_prompt(msg.group), user, image_b64=msg.image_b64)
     answer = outbound_eraser(answer)
     # 超长压缩（草稿+校对），压缩后断尾兜底
     if answer and len(answer) > 150:

@@ -9,6 +9,7 @@ import json
 import re
 import time
 import traceback
+import base64
 from collections import deque
 from pathlib import Path
 
@@ -24,7 +25,7 @@ _DEFAULTS = {
     "poll_interval": 3,
     "dry_run": False,
 }
-HAND_VERSION = "4.6"  # 每次行为修改必须递增——日志里用来确认改动是否生效
+HAND_VERSION = "4.7"  # 每次行为修改必须递增——日志里用来确认改动是否生效
 
 _cfg_path = Path(__file__).parent / "config.json"
 _cfg = {**_DEFAULTS, **json.loads(_cfg_path.read_text(encoding="utf-8"))} if _cfg_path.exists() else _DEFAULTS
@@ -130,6 +131,14 @@ class PhaseTimer:
                 log(f"⚠️【{self.group}】慢环节: {name} 耗时 {dur:.0f}s")
 
 
+def grab_media_b64(m):
+    """图片用 download 读图；表情取不到（实测右键复制无效），返回空按占位处理。"""
+    if m.type == "image":
+        img_path = m.download()
+        return base64.b64encode(Path(img_path).read_bytes()).decode() if img_path else ""
+    return ""
+
+
 def fetch_outbox(group):
     try:
         r = requests.get(BRAIN_URL + "/outbox", params={"group": group},
@@ -230,8 +239,8 @@ def main():
                 # 预览完整性判断：末尾省略号/[图片]/[表情]/[视频] 等 → 不完整，必须进窗口
                 truncated = bool(re.search(r"(…|\.\.\.)\s*$", preview)) or bool(
                     re.search(r"\[(图片|表情|视频|语音|文件|动画表情)\]", preview))
-                # 媒体预览：鱼看不见内容，跳过不回复，但要记账预览避免堵住后续消息
-                if re.search(r"\[(图片|表情|视频|语音|文件|动画表情)\]", preview):
+                # 媒体预览：图片放行（可下载做视觉理解）；表情/视频/语音/文件跳过
+                if re.search(r"\[(表情|视频|语音|文件|动画表情)\]", preview):
                     last_preview[group] = preview
                     log(f"【{group}】媒体消息，跳过（鱼看不见）")
                     continue
@@ -292,9 +301,17 @@ def main():
                             mention = True
                             text = f"{m.content}（{m.sender} 引用了你之前的话：「{qcontent[:60]}」）"
                     log(f"【{group}】{m.sender}: {text[:60]}")
+                    image_b64 = ""
+                    if m.type in ("image", "emotion"):
+                        try:
+                            image_b64 = grab_media_b64(m)
+                            if image_b64:
+                                log(f"  （{m.type} 已读取，走视觉理解）")
+                        except Exception as e:
+                            log(f"  （媒体读取失败，按占位处理: {e}）")
                     resp = brain_post("/group-message", {
                         "group": group, "sender": m.sender,
-                        "text": text, "mention": mention,
+                        "text": text, "mention": mention, "image_b64": image_b64,
                     })
                     pt.mark("问鱼脑")
                     reply = resp.get("reply")

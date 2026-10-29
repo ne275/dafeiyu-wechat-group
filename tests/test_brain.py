@@ -85,5 +85,13 @@ class TestBubbles:
     def test_single(self):
         assert app.split_bubbles("在") == ["在"]
 
+    def test_bare_newline_splits(self):
+        """裸换行也要拆成两条气泡（生产事故：同一绿框里两行本意两条消息）。"""
+        assert app.split_bubbles("第一句\n第二句") == ["第一句", "第二句"]
+
+    def test_code_block_not_split(self):
+        code = "看这段：\n```\nline1\nline2\n```"
+        assert app.split_bubbles(code) == [code]
+
     def test_empty_parts_dropped(self):
         assert app.split_bubbles("a[[next]]\n[[next]]b") == ["a", "b"]
