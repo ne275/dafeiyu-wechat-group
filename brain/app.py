@@ -27,6 +27,8 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
+BRAIN_VERSION = "4.2"  # 行为修改必须递增——/fish/health 里可验证
+
 PERSONA = (BASE_DIR / "persona.txt").read_text(encoding="utf-8")
 _memes_path = BASE_DIR / "memes.txt"
 MEMES = _memes_path.read_text(encoding="utf-8") if _memes_path.exists() else ""
@@ -115,28 +117,33 @@ TOOLS = [
 
 
 async def call_deepseek_tools(messages: list) -> dict:
-    async with httpx.AsyncClient(timeout=60) as cli:
-        resp = await cli.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
-            json={"model": MODEL, "messages": messages,
-                  "tools": TOOLS, "tool_choice": "auto"},
-        )
-        resp.raise_for_status()
-        return resp.json()
+    resp = await deepseek_client().post(
+        "https://api.deepseek.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
+        json={"model": MODEL, "messages": messages,
+              "tools": TOOLS, "tool_choice": "auto"},
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 async def planner_active(msg: GroupMessage, context: str, sender_tag: str) -> tuple[str, str | None]:
-    """主动插话的 Planner 循环。返回 (action, text)，action ∈ reply/skip/wait。"""
+    """主动插话的 Planner 循环。返回 (action, text)，action ∈ reply/skip/wait。
+    判断用瘦 prompt（不带人格卡/热梗，省 prefill）；决定说话后再用完整人格生成。"""
+    judge_system = (
+        "你在替一个群聊机器人做判断：群里每条消息决定【接话 / 沉默 / 等对方说完】。\n"
+        "原则：不每条都接；对方半截话就等；和你无关的闲聊多数沉默。\n"
+        + (f"【这个群的近期话题】\n{memory['groups'].get(msg.group, {}).get('summary')}\n\n"
+           if memory["groups"].get(msg.group, {}).get("summary") else ""))
     messages = [
-        {"role": "system", "content": system_prompt(msg.group)},
+        {"role": "system", "content": judge_system},
         {"role": "user", "content": (
-            f"【群聊记录】（其中“大肥鱼:”开头的是你自己刚说过的话）\n{context}\n\n"
+            f"【群聊记录】（其中“大肥鱼:”开头的是机器人自己刚说过的）\n{context}\n\n"
             f"最新消息是 {sender_tag} 说的：{msg.text}\n"
-            "没人叫你。你现在处于自主判断模式：可以用 query_profile / query_memory 查背景，"
-            "然后必须做最终动作：reply（插一句）/ skip（沉默）/ wait（等对方说完）。"
-            "最多用 3 次查询工具。不要重复自己刚说过的意思。")},
+            "判断后必须做最终动作：reply（给出要说的大意）/ skip / wait。"
+            "最多用 3 次查询工具。")},
     ]
+    draft = None
     for _ in range(3):
         try:
             resp = await call_deepseek_tools(messages)
@@ -149,13 +156,15 @@ async def planner_active(msg: GroupMessage, context: str, sender_tag: str) -> tu
                 return "skip", None
             if content == "等等":
                 return "wait", None
-            return "reply", outbound_eraser(content)
+            draft = content
+            break
         messages.append(m)
         for tc in m["tool_calls"]:
             name = tc["function"]["name"]
             args = json.loads(tc["function"].get("arguments") or "{}")
             if name == "reply":
-                return "reply", outbound_eraser(args.get("text", ""))
+                draft = args.get("text", "")
+                break
             if name == "skip":
                 return "skip", None
             if name == "wait":
@@ -165,11 +174,41 @@ async def planner_active(msg: GroupMessage, context: str, sender_tag: str) -> tu
             else:  # query_memory
                 result = memory["groups"].get(msg.group, {}).get("summary") or "（还没有记忆）"
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
-    return "skip", None
+        if draft is not None:
+            break
+    if draft is None:
+        return "skip", None
+    # 决定说了→用完整人格生成正式发言
+    final = await call_deepseek(
+        system_prompt(msg.group),
+        f"【群聊记录】\n{context}\n\n{sender_tag} 刚说：{msg.text}\n"
+        f"你决定插一句话，大意是：{draft}\n用你的口吻写出来，一两句以内，可以按 [[next]] 连发。")
+    return "reply", outbound_eraser(final)
+
+
+# ---------- 指标 ----------
+def record_stats(mode: str, latency_ms: int, llm_ms: int):
+    today = time.strftime("%F")
+    st = memory.setdefault("stats", {}).setdefault(today, {"replies": 0, "mentions": 0, "actives": 0, "latencies": []})
+    st["replies"] += 1
+    st["mentions" if mode == "mention" else "actives"] += 1
+    st["latencies"].append({"total": latency_ms, "llm": llm_ms})
+    save_memory()
 
 
 # ---------- 出站橡皮擦 ----------
-META_PATTERNS = ["作为AI", "作为人工智能", "作为一个人工智能", "AI助手", "作为语言模型"]
+META_PATTERNS = [
+    "作为AI", "作为人工智能", "作为一个人工智能", "AI助手", "作为语言模型",
+    "综上所述", "总而言之", "值得注意的是", "对你有帮助",
+    "有什么可以帮您", "这是个好问题", "我理解你的感受", "首先", "其次",
+    "祝你", "加油！",
+]
+
+
+def split_bubbles(text: str) -> list[str]:
+    """按 [[next]] 协议拆成多条气泡（鱼的连发节奏）。"""
+    parts = [p.strip() for p in re.split(r"\[\[next\]\]", text) if p.strip()]
+    return parts or ([text] if text else [])
 
 
 def outbound_eraser(text: str) -> str:
@@ -189,17 +228,27 @@ def outbound_eraser(text: str) -> str:
 
 
 # ---------- DeepSeek ----------
+# 共享连接池：省掉每次调用的 TCP+TLS 握手（异地 0.5-1s）
+_shared_client: httpx.AsyncClient | None = None
+
+
+def deepseek_client() -> httpx.AsyncClient:
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = httpx.AsyncClient(timeout=60, limits=httpx.Limits(max_keepalive_connections=4))
+    return _shared_client
+
+
 async def call_deepseek(system: str, user: str) -> str:
-    async with httpx.AsyncClient(timeout=60) as cli:
-        resp = await cli.post(
-            "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
-            json={"model": MODEL,
-                  "messages": [{"role": "system", "content": system},
-                               {"role": "user", "content": user}]},
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"].strip()
+    resp = await deepseek_client().post(
+        "https://api.deepseek.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
+        json={"model": MODEL,
+              "messages": [{"role": "system", "content": system},
+                           {"role": "user", "content": user}]},
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"].strip()
 
 
 def system_prompt(group: str) -> str:
@@ -337,6 +386,7 @@ def build_active_context(msg: GroupMessage) -> tuple[str, str]:
 async def group_message(msg: GroupMessage, x_fish_key: str = Header(default="")):
     if x_fish_key != FISH_KEY:
         raise HTTPException(status_code=403)
+    t0 = time.time()
     mode = decide_reply(msg)
     log_chat(msg.group, {"sender": msg.sender, "text": msg.text, "mention": msg.mention, "mode": mode})
     history[msg.group].append({"sender": msg.sender, "text": msg.text})
@@ -348,11 +398,15 @@ async def group_message(msg: GroupMessage, x_fish_key: str = Header(default=""))
     if mode is None:
         return {"reply": None}
     if mode == "mention":
+        t_llm = time.time()
         answer = await compose_reply(msg, mode)
+        llm_ms = int((time.time() - t_llm) * 1000)
     else:
         # active：Planner 工具循环
         context, sender_tag = build_active_context(msg)
+        t_llm = time.time()
         action, answer = await planner_active(msg, context, sender_tag)
+        llm_ms = int((time.time() - t_llm) * 1000)
         if action == "wait":
             waiting[msg.group] = True  # 下一条消息强制重判
             return {"reply": None}
@@ -368,9 +422,12 @@ async def group_message(msg: GroupMessage, x_fish_key: str = Header(default=""))
     if mode == "active":
         last_active_reply[msg.group] = time.time()
     daily_count[time.strftime("%F")] += 1
+    latency_ms = int((time.time() - t0) * 1000)
+    record_stats(mode, latency_ms, llm_ms)
     history[msg.group].append({"sender": "大肥鱼", "text": answer})
-    log_chat(msg.group, {"sender": "大肥鱼", "text": answer, "mode": mode})
-    return {"reply": answer, "mode": mode}
+    log_chat(msg.group, {"sender": "大肥鱼", "text": answer, "mode": mode,
+                         "latency_ms": latency_ms, "llm_ms": llm_ms})
+    return {"reply": answer, "mode": mode, "parts": split_bubbles(answer)}
 
 
 @app.get("/fish/logs")
@@ -491,11 +548,44 @@ def get_outbox(group: str = Query(...), x_fish_key: str = Header(default="")):
     return {"messages": msgs}
 
 
+@app.get("/fish/stats")
+def get_stats(x_fish_key: str = Header(default="")):
+    """控制面板数据：今日指标 + 延迟分布 + 各群状态。"""
+    if x_fish_key != FISH_KEY:
+        raise HTTPException(status_code=403)
+    today = time.strftime("%F")
+    st = memory.get("stats", {}).get(today, {"replies": 0, "mentions": 0, "actives": 0, "latencies": []})
+    lats = [x["total"] for x in st.get("latencies", [])]
+    lats_sorted = sorted(lats)
+    p95 = lats_sorted[int(len(lats_sorted) * 0.95)] if lats_sorted else 0
+    return {
+        "today": today,
+        "replies": st.get("replies", 0),
+        "mentions": st.get("mentions", 0),
+        "actives": st.get("actives", 0),
+        "latency_avg_ms": round(sum(lats) / len(lats)) if lats else 0,
+        "latency_p95_ms": p95,
+        "active_groups": {g: round(t - time.time()) for g, t in active_until.items() if t > time.time()},
+        "memory_groups": list(memory["groups"].keys()),
+        "jargon_learned": len(memory.get("jargon", {})),
+    }
+
+
+@app.get("/fish/board")
+def board():
+    html = (BASE_DIR / "board.html")
+    if html.exists():
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(html.read_text(encoding="utf-8"))
+    raise HTTPException(status_code=404, detail="board.html not found")
+
+
 @app.get("/fish/health")
 def health():
     now = time.time()
     return {
         "status": "ok",
+        "version": BRAIN_VERSION,
         "model": MODEL,
         "daily": dict(daily_count),
         "active_groups": {g: round(t - now) for g, t in active_until.items() if t > now},
