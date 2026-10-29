@@ -24,7 +24,7 @@ _DEFAULTS = {
     "poll_interval": 3,
     "dry_run": False,
 }
-HAND_VERSION = "4.2"  # 每次行为修改必须递增——日志里用来确认改动是否生效
+HAND_VERSION = "4.3"  # 每次行为修改必须递增——日志里用来确认改动是否生效
 
 _cfg_path = Path(__file__).parent / "config.json"
 _cfg = {**_DEFAULTS, **json.loads(_cfg_path.read_text(encoding="utf-8"))} if _cfg_path.exists() else _DEFAULTS
@@ -294,11 +294,12 @@ def main():
                         fresh = fresh_message(wx, m.sender, getattr(m, "content", ""))
                         if fresh is None:
                             log("  （原消息已失效，退回 @ 发送）")
+                        # @ 只在必要时用：引用失败且有人明确@了鱼；普通接话不@（输入框会"打@再删"）
+                        at = m.sender if (fresh is None and "@" in getattr(m, "content", "")) else None
                         for i, part in enumerate(parts):
                             if i > 0:
                                 time.sleep(SEND_GAP)
-                            send(wx, group, part,
-                                 at=m.sender if i == 0 else None,
+                            send(wx, group, part, at=at if i == 0 else None,
                                  reply_to=fresh if i == 0 else None)
                         if not DRY_RUN:
                             watch[group] = {"reply": reply, "deadline": time.time() + EFFECT_WATCH_SEC,
