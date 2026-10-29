@@ -84,6 +84,90 @@ class GroupMessage(BaseModel):
     mention: bool = False   # fish_hand 检测到"引用了鱼"时置真
 
 
+class EffectReport(BaseModel):
+    """鱼发言后一段时间内的群内反应（鱼手上报）。"""
+    group: str
+    reply: str
+    reactions: list[dict] = []  # [{"sender":..., "text":...}]
+
+
+# ---------- Planner 工具循环（active 模式） ----------
+TOOLS = [
+    {"type": "function", "function": {"name": "reply",
+     "description": "在群里插一句话",
+     "parameters": {"type": "object",
+                    "properties": {"text": {"type": "string", "description": "要说的话，一两句以内"}},
+                    "required": ["text"]}}},
+    {"type": "function", "function": {"name": "skip",
+     "description": "不接话，保持沉默", "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "wait",
+     "description": "对方可能话没说完（比如只发了「在吗」），等下一条消息再判断",
+     "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "query_profile",
+     "description": "查看你对某个群友的印象档案",
+     "parameters": {"type": "object",
+                    "properties": {"name": {"type": "string", "description": "群友昵称"}},
+                    "required": ["name"]}}},
+    {"type": "function", "function": {"name": "query_memory",
+     "description": "查看这个群的近期话题记忆",
+     "parameters": {"type": "object", "properties": {}}}},
+]
+
+
+async def call_deepseek_tools(messages: list) -> dict:
+    async with httpx.AsyncClient(timeout=60) as cli:
+        resp = await cli.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {DEEPSEEK_KEY}"},
+            json={"model": MODEL, "messages": messages,
+                  "tools": TOOLS, "tool_choice": "auto"},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def planner_active(msg: GroupMessage, context: str, sender_tag: str) -> tuple[str, str | None]:
+    """主动插话的 Planner 循环。返回 (action, text)，action ∈ reply/skip/wait。"""
+    messages = [
+        {"role": "system", "content": system_prompt(msg.group)},
+        {"role": "user", "content": (
+            f"【群聊记录】（其中“大肥鱼:”开头的是你自己刚说过的话）\n{context}\n\n"
+            f"最新消息是 {sender_tag} 说的：{msg.text}\n"
+            "没人叫你。你现在处于自主判断模式：可以用 query_profile / query_memory 查背景，"
+            "然后必须做最终动作：reply（插一句）/ skip（沉默）/ wait（等对方说完）。"
+            "最多用 3 次查询工具。不要重复自己刚说过的意思。")},
+    ]
+    for _ in range(3):
+        try:
+            resp = await call_deepseek_tools(messages)
+        except Exception:
+            return "skip", None
+        m = resp["choices"][0]["message"]
+        if not m.get("tool_calls"):
+            content = (m.get("content") or "").strip()
+            if not content or "跳过" in content:
+                return "skip", None
+            if content == "等等":
+                return "wait", None
+            return "reply", outbound_eraser(content)
+        messages.append(m)
+        for tc in m["tool_calls"]:
+            name = tc["function"]["name"]
+            args = json.loads(tc["function"].get("arguments") or "{}")
+            if name == "reply":
+                return "reply", outbound_eraser(args.get("text", ""))
+            if name == "skip":
+                return "skip", None
+            if name == "wait":
+                return "wait", None
+            if name == "query_profile":
+                result = sender_profile(msg.group, args.get("name", "")) or "（没有这人的画像）"
+            else:  # query_memory
+                result = memory["groups"].get(msg.group, {}).get("summary") or "（还没有记忆）"
+            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+    return "skip", None
+
+
 # ---------- 出站橡皮擦 ----------
 META_PATTERNS = ["作为AI", "作为人工智能", "作为一个人工智能", "AI助手", "作为语言模型"]
 
@@ -118,6 +202,10 @@ def system_prompt(group: str) -> str:
     parts = [PERSONA]
     if MEMES:
         parts.append(MEMES)
+    learned = memory.get("jargon", {})
+    if learned:
+        terms = "；".join(f"{t}={m}" for t, m in list(learned.items())[:30])
+        parts.append(f"【你在群里学会的黑话】（自然使用，别刻意刷）\n{terms}")
     mem = memory["groups"].get(group, {}).get("summary")
     if mem:
         today = time.strftime("%Y-%m-%d", time.gmtime(time.time() + TZ_OFFSET))
@@ -197,6 +285,11 @@ async def compose_reply(msg: GroupMessage, mode: str) -> str | None:
         else:
             user = f"【群聊记录】\n{context}\n\n{sender_tag} 刚刚对你说话：{msg.text}\n请认真回答。"
     else:
+        eff = memory["groups"].get(msg.group, {}).get("effects", [])
+        if eff:
+            last = eff[-1]
+            feel = ("有人接你的话" if last["reactions"] else "没人接话") + ("，还有人@你" if last.get("mentioned") else "")
+            context += f"\n\n【你上次发言的反响】你说「{last['reply']}」之后：{feel}。"
         user = (f"【群聊记录】（其中“大肥鱼:”开头的是你自己刚说过的话，别再重复同一个意思）\n{context}\n\n"
                 f"最新消息是 {sender_tag} 说的：{msg.text}\n"
                 "没人叫你。你有三个选择：\n"
@@ -206,12 +299,28 @@ async def compose_reply(msg: GroupMessage, mode: str) -> str | None:
     answer = await call_deepseek(system_prompt(msg.group), user)
     answer = outbound_eraser(answer)
     # 超长压缩（草稿+校对）
-    if answer and "跳过" not in answer and len(answer) > 150:
+    if answer and len(answer) > 150:
         answer = await call_deepseek(
             system_prompt(msg.group),
             f"把下面这段你要说的话压缩到 60 字以内，保持语气不变，只输出压缩后的内容：\n{answer}")
         answer = outbound_eraser(answer)
     return answer or None
+
+
+def build_active_context(msg: GroupMessage) -> tuple[str, str]:
+    """active 模式的上下文与说话人标签（含画像与上次反响）。"""
+    lines = [f"{m['sender']}: {m['text']}" for m in history[msg.group]]
+    context = "\n".join(lines) if lines else "（群里刚才没人说话）"
+    profile = sender_profile(msg.group, msg.sender)
+    if profile:
+        context += f"\n\n【你对 {msg.sender} 的印象】{profile}"
+    eff = memory["groups"].get(msg.group, {}).get("effects", [])
+    if eff:
+        last = eff[-1]
+        feel = ("有人接你的话" if last["reactions"] else "没人接话") + ("，还有人@你" if last.get("mentioned") else "")
+        context += f"\n\n【你上次发言的反响】你说「{last['reply']}」之后：{feel}。"
+    sender_tag = f"{msg.sender}（主人）" if OWNER and msg.sender == OWNER else msg.sender
+    return context, sender_tag
 
 
 @app.post("/fish/group-message")
@@ -228,12 +337,16 @@ async def group_message(msg: GroupMessage, x_fish_key: str = Header(default=""))
         asyncio.create_task(summarize_group(msg.group))
     if mode is None:
         return {"reply": None}
-    answer = await compose_reply(msg, mode)
-    if mode == "active":
-        if answer is not None and answer.strip() == "等等":
+    if mode == "mention":
+        answer = await compose_reply(msg, mode)
+    else:
+        # active：Planner 工具循环
+        context, sender_tag = build_active_context(msg)
+        action, answer = await planner_active(msg, context, sender_tag)
+        if action == "wait":
             waiting[msg.group] = True  # 下一条消息强制重判
             return {"reply": None}
-        if answer is None or "跳过" in answer:
+        if action == "skip" or not answer:
             skip_streak[msg.group] += 1
             if skip_streak[msg.group] >= ACTIVE_SKIP_LIMIT:
                 active_until[msg.group] = 0
@@ -264,6 +377,44 @@ def get_logs(group: str = Query(...), date: str = Query(default=""),
     return {"records": [json.loads(x) for x in lines[-tail:]], "date": day, "group": group}
 
 
+# ---------- 黑话学习（每日扫描日志） ----------
+async def jargon_job():
+    """扫描今日聊天日志，提取鱼不认识的新词，两次出现后正式学会。"""
+    day = time.strftime("%Y-%m-%d", time.gmtime(time.time() + TZ_OFFSET))
+    candidates = memory.setdefault("jargon_candidates", {})
+    learned = memory.setdefault("jargon", {})
+    known = set(learned.keys())
+    for chat_dir in LOG_DIR.glob("*"):
+        log_file = chat_dir / f"{day}.jsonl"
+        if not log_file.exists():
+            continue
+        lines = [json.loads(x) for x in log_file.read_text(encoding="utf-8").splitlines()]
+        human = [f"{r['sender']}: {r['text']}" for r in lines
+                 if r.get("sender") not in ("大肥鱼",) and r.get("text")]
+        if len(human) < 10:
+            continue
+        try:
+            raw = await call_deepseek(
+                "你是群聊黑话挖掘机。从聊天记录里找出【你可能不认识的新词/缩写/梗】"
+                "（排除这些已知的：" + "、".join(list(known)[:50]) + "）。\n"
+                "严格输出 JSON 数组（没有就输出 []）："
+                '[{"term": "词", "meaning": "结合上下文推测的含义，一句话"}]',
+                "\n".join(human[-80:]))
+            items = json.loads(raw.strip().removeprefix("```json").removesuffix("```").strip())
+            for it in items:
+                term, meaning = it.get("term", "").strip(), it.get("meaning", "").strip()
+                if not term or term in learned:
+                    continue
+                c = candidates.setdefault(term, {"meaning": meaning, "count": 0})
+                c["count"] += 1
+                if c["count"] >= 2:        # 两次出现才正式学会（防误学）
+                    learned[term] = c["meaning"]
+                    del candidates[term]
+            save_memory()
+        except Exception:
+            pass
+
+
 # ---------- 定时冒泡（早晚安） ----------
 CRON_SLOTS = [
     ("morning", 7, 0, "现在是早上 7 点。请叫群里的大家起床：元气满满的早安，嫌弃他们赖床，催他们别磨蹭；一两句话就好，语气像平时的你。"),
@@ -276,6 +427,13 @@ async def cron_loop():
         now = time.time() + TZ_OFFSET
         lt = time.gmtime(now)
         today = time.strftime("%Y-%m-%d", lt)
+        # 黑话学习任务（每日 23:00）
+        if lt.tm_hour == 23 and lt.tm_min == 0:
+            fired_j = memory.setdefault("_cron", {})
+            if fired_j.get("jargon") != today:
+                fired_j["jargon"] = today
+                save_memory()
+                asyncio.create_task(jargon_job())
         for slot, hh, mm, prompt in CRON_SLOTS:
             if lt.tm_hour == hh and lt.tm_min == mm:
                 for group in list(history.keys()):
@@ -297,6 +455,21 @@ async def cron_loop():
 @app.on_event("startup")
 async def _startup():
     asyncio.create_task(cron_loop())
+
+
+@app.post("/fish/effect")
+def report_effect(rep: EffectReport, x_fish_key: str = Header(default="")):
+    if x_fish_key != FISH_KEY:
+        raise HTTPException(status_code=403)
+    mentioned = any("大肥鱼" in r.get("text", "") for r in rep.reactions)
+    gm = memory["groups"].setdefault(rep.group, {})
+    effects = gm.get("effects", [])[-4:]
+    effects.append({"reply": rep.reply[:60], "reactions": len(rep.reactions), "mentioned": mentioned})
+    gm["effects"] = effects
+    save_memory()
+    log_chat(rep.group, {"type": "effect", "reply": rep.reply[:60],
+                         "reactions": len(rep.reactions), "mentioned": mentioned})
+    return {"ok": True}
 
 
 @app.get("/fish/outbox")

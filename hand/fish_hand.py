@@ -38,6 +38,19 @@ def brain_post(path, payload):
     return {}
 
 
+EFFECT_WATCH_SEC = 60  # 鱼发言后观察群反应的时长
+
+
+def report_effect(group, reply, reactions):
+    """上报鱼发言后的群反应（效果追踪）。"""
+    try:
+        requests.post(BRAIN_URL + "/effect",
+                      json={"group": group, "reply": reply, "reactions": reactions},
+                      headers={"X-Fish-Key": FISH_KEY}, timeout=15)
+    except Exception:
+        pass
+
+
 def fetch_outbox(group):
     try:
         r = requests.get(BRAIN_URL + "/outbox", params={"group": group},
@@ -82,6 +95,7 @@ def main():
     wx = WeChat()
     seen = {g: set() for g in GROUPS}
     first_run = {g: True for g in GROUPS}
+    watch = {}  # group -> {"reply": str, "deadline": float, "reactions": list}
 
     while True:
         for group in GROUPS:
@@ -119,13 +133,25 @@ def main():
                         "text": text, "mention": mention,
                     })
                     reply = resp.get("reply")
+                    # 效果追踪：鱼发言后 60s 内的群消息都记为反应
+                    if group in watch and m.attr == "friend":
+                        watch[group]["reactions"].append({"sender": m.sender, "text": m.content[:80]})
                     if reply:
                         log(f"  → 鱼回复({resp.get('mode')}): {reply[:50]}")
                         send(wx, group, reply, at=m.sender)
+                        if not DRY_RUN:
+                            watch[group] = {"reply": reply, "deadline": time.time() + EFFECT_WATCH_SEC,
+                                            "reactions": []}
                         time.sleep(2)
                     else:
                         log("  → 鱼选择沉默")
                 first_run[group] = False
+                # 上报到期了的效果观察
+                if group in watch and time.time() > watch[group]["deadline"]:
+                    w = watch.pop(group)
+                    n = len(w["reactions"])
+                    log(f"【{group}】效果追踪：鱼说「{w['reply'][:30]}」后 60s 内有 {n} 条反应")
+                    report_effect(group, w["reply"], w["reactions"])
             except Exception:
                 log(f"【{group}】轮询出错:")
                 traceback.print_exc()
