@@ -1,21 +1,61 @@
 归属与致谢
 ==========
 
-本项目包含改编自以下开源项目的内容：
+本项目包含改编内容与灵感参考，分别列出。
+
+一、改编内容（实质性素材）
+-------------------------
 
 1. whyever77/dafeiyu-astrbot
    https://github.com/whyever77/dafeiyu-astrbot
-   - brain/persona.txt 改编自其 persona/大肥鱼-人格.md（v2.1，QQ 版 → 微信文本版适配：
-     移除了 QQ 专属的工具调用、语音、虚拟手机等章节，保留人格核心）
+   - brain/persona.txt 的早期版本改编自其 persona/大肥鱼-人格.md（v2.1，QQ 版 →
+     微信文本版适配；当前版本已经过多轮重写，仅保留人格骨架）
    - brain/memes.txt 来自其 docs/知识库-热梗词典示例.md
-   - "出站橡皮擦"、身份标记、引用唤醒、定时冒泡配方等设计灵感亦来自该项目
+   - "出站橡皮擦"（双层括号草稿）、身份标记、引用唤醒、定时冒泡配方等设计来自该项目
 
 2. SAKURAfan1023/dafeiyu-bot
    https://github.com/SAKURAfan1023/dafeiyu-bot
-   - 短句硬上限、每 N 条评估等回复策略参考
+   - 短句硬上限、草稿+校对两次调用、每 N 条评估等回复策略参考
 
-3. wxauto（cluic）
-   https://docs.wxauto.org
-   - hand/ 依赖的 Windows UI 自动化库，请遵守其可接受使用政策
+二、机制与架构参考（拟人 QQ 机器人生态）
+-----------------------------------------
 
-"大肥鱼"形象为 DeepSeek 蓝鲸 logo 的社区二创（非官方），本项目与 DeepSeek、腾讯无关。
+以下项目的文档与源码是本项目 v4 决策/认知机制的直接参考：
+
+- MaiM-with-u/MaiBot（麦麦）——Timing Gate 两级判断、Planner 工具循环（wait/continue 等内置工具）、
+  回复效果追踪、表达/黑话/行为三类学习者、A_Memorix 记忆
+  https://github.com/MaiM-with-u/MaiBot
+- luojisama/personification —— TurnPlan 与 Agent tool loop、好感度观察、拟人发送
+  https://github.com/luojisama/personification
+- SugarMGP/MumuBot —— 黑话学习的"人工审核后入库"思路、群友画像维度
+  https://github.com/SugarMGP/MumuBot
+- YesImBot —— will 引擎；人格卡 v4 的五条规则（零缓冲、禁点评员、表情包静默、句号封杀、
+  反 AI 质疑）与"错误/正确对照示范"写法直接参考其《拟人发言模板》
+  https://docs.yesimbot.chat/best-practices/prompt-engineering/
+- InternLM/HuixiangDou（茴香豆）——群聊"预处理→拒答→响应"三阶段流水线
+  （arXiv:2401.08772）https://github.com/InternLM/HuixiangDou
+
+三、人格与提示词方法论
+----------------------
+
+- lm041520/Comet 的 human_style 提示词 —— "真人聊天模式"（一句话原则、禁排版、先反应后内容）
+  https://github.com/lm041520/Comet
+- 老金（Dify-On-WeChat 教程作者）的拟人提示词方法论 —— 制造"不完美"（松散标点、不反问、口头禅）
+- galaxy-b612/astrbot_plugin_group_chat_plus —— 概率参数参考（基础 2% / 回复后 120 秒升至 80%）
+- qa296/astrbot_plugin_reply_directly —— "回复后短暂窗口内追问免@"的沉浸式设计
+- YunYueSama/codex-deepseek-pet —— 大肥鱼角色设定的社区源头之一
+
+四、基础设施
+------------
+
+- wxauto（cluic）https://docs.wxauto.org —— hand/ 依赖的 Windows UI 自动化库，
+  请遵守其可接受使用政策
+- SiverKing/wechat4.0-windows-versions —— 微信历史版本存档（钉版本部署使用）
+- AstrBot（AstrBotDevs）https://github.com/AstrBotDevs/AstrBot —— 早期实验平台，
+  现役架构已不依赖，致谢
+
+五、社区知识
+------------
+
+- "断网切换法"（手机断网退出登录以保留 PC 端会话）来自微信机器人社区的通行做法，
+  由本项目用户贡献并验证。
