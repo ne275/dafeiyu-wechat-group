@@ -232,11 +232,16 @@ def main():
                     if group in watch and m.attr == "friend":
                         watch[group]["reactions"].append({"sender": m.sender, "text": m.content[:80]})
                     if reply:
-                        log(f"  → 鱼回复({resp.get('mode')}): {reply[:50]}")
+                        parts = resp.get("parts") or [reply]
+                        log(f"  → 鱼回复({resp.get('mode')}, {len(parts)} 条气泡): {reply[:50]}")
                         fresh = fresh_message(wx, m.sender, getattr(m, "content", ""))
                         if fresh is None:
                             log("  （原消息已失效，退回 @ 发送）")
-                        send(wx, group, reply, at=m.sender, reply_to=fresh)
+                        for i, part in enumerate(parts):
+                            time.sleep(min(0.5 + 0.12 * len(part), 4))  # 打字延迟
+                            send(wx, group, part,
+                                 at=m.sender if i == 0 else None,
+                                 reply_to=fresh if i == 0 else None)
                         if not DRY_RUN:
                             watch[group] = {"reply": reply, "deadline": time.time() + EFFECT_WATCH_SEC,
                                             "reactions": []}

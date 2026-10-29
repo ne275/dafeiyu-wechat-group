@@ -169,7 +169,18 @@ async def planner_active(msg: GroupMessage, context: str, sender_tag: str) -> tu
 
 
 # ---------- 出站橡皮擦 ----------
-META_PATTERNS = ["作为AI", "作为人工智能", "作为一个人工智能", "AI助手", "作为语言模型"]
+META_PATTERNS = [
+    "作为AI", "作为人工智能", "作为一个人工智能", "AI助手", "作为语言模型",
+    "综上所述", "总而言之", "值得注意的是", "对你有帮助",
+    "有什么可以帮您", "这是个好问题", "我理解你的感受", "首先", "其次",
+    "祝你", "加油！",
+]
+
+
+def split_bubbles(text: str) -> list[str]:
+    """按 [[next]] 协议拆成多条气泡（鱼的连发节奏）。"""
+    parts = [p.strip() for p in re.split(r"\[\[next\]\]", text) if p.strip()]
+    return parts or ([text] if text else [])
 
 
 def outbound_eraser(text: str) -> str:
@@ -370,7 +381,7 @@ async def group_message(msg: GroupMessage, x_fish_key: str = Header(default=""))
     daily_count[time.strftime("%F")] += 1
     history[msg.group].append({"sender": "大肥鱼", "text": answer})
     log_chat(msg.group, {"sender": "大肥鱼", "text": answer, "mode": mode})
-    return {"reply": answer, "mode": mode}
+    return {"reply": answer, "mode": mode, "parts": split_bubbles(answer)}
 
 
 @app.get("/fish/logs")
