@@ -154,6 +154,8 @@ def main():
 
     while True:
         for group in GROUPS:
+            cycle_start = time.time()
+            pt = PhaseTimer(group)
             try:
                 for msg in fetch_outbox(group):
                     log(f"【{group}】定时冒泡: {msg[:40]}")
@@ -171,8 +173,6 @@ def main():
                             break
                 except Exception:
                     pass
-                cycle_start = time.time()
-                pt = PhaseTimer(group)
                 pt.mark("GetSession")
                 if preview is None or preview == last_preview.get(group):
                     idle_cycles[group] += 1

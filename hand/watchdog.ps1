@@ -20,12 +20,13 @@ public class Win32 {
 function Keep-Alive {
     # 微信窗口被最小化则还原（最小化时停止渲染消息列表）
     foreach ($name in @("Weixin", "WeChat")) {
-        $proc = Get-Process $name -ErrorAction SilentlyContinue
-        if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) {
-            if ([Win32]::IsIconic($proc.MainWindowHandle)) {
-                [Win32]::ShowWindowAsync($proc.MainWindowHandle, 9) | Out-Null  # SW_RESTORE
-                wlog "检测到微信窗口最小化，已还原"
-            }
+        foreach ($proc in @(Get-Process $name -ErrorAction SilentlyContinue)) {
+            try {
+                if ($proc.MainWindowHandle -ne [IntPtr]::Zero -and [Win32]::IsIconic($proc.MainWindowHandle)) {
+                    [Win32]::ShowWindowAsync($proc.MainWindowHandle, 9) | Out-Null  # SW_RESTORE
+                    wlog "检测到微信窗口最小化，已还原"
+                }
+            } catch { }
         }
     }
     # 鼠标微动 1px：防 Windows 空闲降级渲染管线
