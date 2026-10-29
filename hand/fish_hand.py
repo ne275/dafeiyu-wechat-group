@@ -24,7 +24,7 @@ _DEFAULTS = {
     "poll_interval": 3,
     "dry_run": False,
 }
-HAND_VERSION = "4.4"  # 每次行为修改必须递增——日志里用来确认改动是否生效
+HAND_VERSION = "4.5"  # 每次行为修改必须递增——日志里用来确认改动是否生效
 
 _cfg_path = Path(__file__).parent / "config.json"
 _cfg = {**_DEFAULTS, **json.loads(_cfg_path.read_text(encoding="utf-8"))} if _cfg_path.exists() else _DEFAULTS
@@ -226,10 +226,30 @@ def main():
                 # 只在「检测停滞」的保养轮里用；平时轻量切换即可
                 idle_cycles[group] = 0
                 last_preview[group] = preview
-                wx.ChatWith(group)
-                pt.mark("ChatWith")
-                msgs = wx.GetAllMessage()
-                pt.mark("GetAllMessage")
+
+                # 预览完整性判断：末尾省略号/[图片]/[表情]/[视频] 等 → 不完整，必须进窗口
+                truncated = bool(re.search(r"(…|\.\.\.)\s*$", preview)) or bool(
+                    re.search(r"\[(图片|表情|视频|语音|文件|动画表情)\]", preview))
+                has_at_fish = "大肥鱼" in preview
+                if not truncated and not has_at_fish:
+                    # 完整短文本：直接用预览构造消息，零窗口渲染成本
+                    m2 = re.match(r"^(?:\[\d+条\])?([^:：]+)[:：]\s*(.+)$", preview)
+                    if m2:
+                        pseudo = type("PseudoMsg", (), {"sender": m2.group(1).strip(),
+                                                        "content": m2.group(2).strip(),
+                                                        "attr": "friend", "type": "text"})()
+                        msgs = [pseudo]
+                        log(f"【{group}】走预览捷径（完整短消息）")
+                    else:
+                        msgs = None  # 解析不了，回退进窗口
+                else:
+                    msgs = None  # 截断或@：必须进窗口走完整流程
+
+                if msgs is None:
+                    wx.ChatWith(group)
+                    pt.mark("ChatWith")
+                    msgs = wx.GetAllMessage()
+                    pt.mark("GetAllMessage")
                 if len(msgs) != last_counts.get(group, -1):
                     log(f"【{group}】读取到 {len(msgs)} 条消息")
                     last_counts[group] = len(msgs)
