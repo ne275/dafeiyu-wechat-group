@@ -33,8 +33,21 @@ POLL_INTERVAL = _cfg.get("poll_interval", 3)
 DRY_RUN = _cfg.get("dry_run", False)  # 影子模式：思考但不对微信发送
 
 
+_LOG_FILE = Path(__file__).parent / "fish_hand.log"
+
+
 def log(*a):
-    print(time.strftime("[%H:%M:%S]"), *a, flush=True)
+    line = " ".join(str(x) for x in a)
+    line = f"{time.strftime('[%m-%d %H:%M:%S]')} {line}"
+    print(line, flush=True)
+    try:
+        # 超过 2MB 轮转为 .old，避免无限增长
+        if _LOG_FILE.exists() and _LOG_FILE.stat().st_size > 2 * 1024 * 1024:
+            _LOG_FILE.replace(_LOG_FILE.with_suffix(".log.old"))
+        with open(_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
 
 
 def brain_post(path, payload):
