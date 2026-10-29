@@ -76,6 +76,22 @@ def report_effect(group, reply, reactions):
         pass
 
 
+class PhaseTimer:
+    """分阶段计时：找出 UIA 卡顿的具体环节。"""
+    def __init__(self, group):
+        self.group, self.t, self.phases = group, time.time(), []
+
+    def mark(self, name):
+        now = time.time()
+        self.phases.append((name, now - self.t))
+        self.t = now
+
+    def report_slow(self):
+        for name, dur in self.phases:
+            if dur > 5:
+                log(f"⚠️【{self.group}】慢环节: {name} 耗时 {dur:.0f}s")
+
+
 def fetch_outbox(group):
     try:
         r = requests.get(BRAIN_URL + "/outbox", params={"group": group},
