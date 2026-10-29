@@ -24,7 +24,7 @@ _DEFAULTS = {
     "poll_interval": 3,
     "dry_run": False,
 }
-HAND_VERSION = "4.3"  # 每次行为修改必须递增——日志里用来确认改动是否生效
+HAND_VERSION = "4.4"  # 每次行为修改必须递增——日志里用来确认改动是否生效
 
 _cfg_path = Path(__file__).parent / "config.json"
 _cfg = {**_DEFAULTS, **json.loads(_cfg_path.read_text(encoding="utf-8"))} if _cfg_path.exists() else _DEFAULTS
@@ -173,21 +173,7 @@ def send(wx, group, text, at=None, reply_to=None):
             log("  （引用失败，退回普通发送）")
         except Exception as e:
             log(f"  （引用异常，退回普通发送: {e}）")
-    wx.SendMsg(text, who=group, at=at)
-
-
-def fresh_message(wx, sender, content):
-    """回复前重新读列表，按发送者+内容找该消息的新鲜 UI 对象。
-    微信 4.x 的消息对象在滚动后会失效，鱼脑思考的几十秒里对象可能已易主，
-    直接用旧对象引用会挂到别人的消息上（回复错人）。"""
-    try:
-        for m in reversed(wx.GetAllMessage()):
-            if (m.attr == "friend" and getattr(m, "sender", None) == sender
-                    and getattr(m, "content", "") == content):
-                return m
-    except Exception:
-        pass
-    return None
+    wx.SendMsg(text, at=at)  # 不传 who：当前就在群里，省一次窗口切换
 
 
 def main():
@@ -236,9 +222,11 @@ def main():
                     idle_cycles[group] = 0
                     wx.ChatWith(group, force=True)
                     continue
+                # 预览变了才动窗口。force=True 会触发全量重渲染（~9s），
+                # 只在「检测停滞」的保养轮里用；平时轻量切换即可
                 idle_cycles[group] = 0
                 last_preview[group] = preview
-                wx.ChatWith(group, force=True)
+                wx.ChatWith(group)
                 pt.mark("ChatWith")
                 msgs = wx.GetAllMessage()
                 pt.mark("GetAllMessage")
@@ -291,16 +279,14 @@ def main():
                     if reply:
                         parts = resp.get("parts") or [reply]
                         log(f"  → 鱼回复({resp.get('mode')}, {len(parts)} 条气泡): {reply[:50]}")
-                        fresh = fresh_message(wx, m.sender, getattr(m, "content", ""))
-                        if fresh is None:
-                            log("  （原消息已失效，退回 @ 发送）")
-                        # @ 只在必要时用：引用失败且有人明确@了鱼；普通接话不@（输入框会"打@再删"）
-                        at = m.sender if (fresh is None and "@" in getattr(m, "content", "")) else None
+                        # 引用优先用原始消息对象（若仍有效），不预先全表扫描；
+                        # 对象已失效时 quote 会失败并自动退回普通发送
+                        at = m.sender if "@" in getattr(m, "content", "") else None
                         for i, part in enumerate(parts):
                             if i > 0:
                                 time.sleep(SEND_GAP)
                             send(wx, group, part, at=at if i == 0 else None,
-                                 reply_to=fresh if i == 0 else None)
+                                 reply_to=m if i == 0 else None)
                         if not DRY_RUN:
                             watch[group] = {"reply": reply, "deadline": time.time() + EFFECT_WATCH_SEC,
                                             "reactions": []}
