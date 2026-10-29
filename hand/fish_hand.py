@@ -8,6 +8,7 @@
 import json
 import time
 import traceback
+from collections import deque
 from pathlib import Path
 
 import requests
@@ -111,10 +112,13 @@ def main():
     mode = "影子模式（不发送）" if DRY_RUN else "正式模式"
     log(f"大肥鱼启动 | {mode} | 监听群: {GROUPS} | 每 {POLL_INTERVAL}s 轮询")
     wx = WeChat()
-    seen = {g: set() for g in GROUPS}
+    # 去重键用内容签名（发送者|类型|内容），不用 UI id——
+    # 微信 4.x 重渲染后 id 会重新分配，id 去重会把新消息误判为已见
+    seen = {g: deque(maxlen=50) for g in GROUPS}
     first_run = {g: True for g in GROUPS}
     watch = {}  # group -> {"reply": str, "deadline": float, "reactions": list}
     last_counts = {}  # 心跳：各群读到的消息数，变化时打印
+    last_preview = {}  # 会话列表哨兵：各群最新消息预览（不受聊天窗口视口卡滞影响）
 
     while True:
         for group in GROUPS:
@@ -125,7 +129,20 @@ def main():
                     send(wx, group, msg)
                     time.sleep(2)
 
-                wx.ChatWith(group)
+                # 哨兵：会话列表预览变了才重进聊天（force 重进会把视口拉回最新，
+                # 解决微信 4.x 实时渲染下「新消息未渲染进 UIA 树」导致的漏检）
+                preview = None
+                try:
+                    for s in wx.GetSession():
+                        if s.name == group:
+                            preview = s.content
+                            break
+                except Exception:
+                    pass
+                if preview is None or preview == last_preview.get(group):
+                    continue  # 无新消息迹象，跳过本轮（不打扰窗口）
+                last_preview[group] = preview
+                wx.ChatWith(group, force=True)
                 msgs = wx.GetAllMessage()
                 if len(msgs) != last_counts.get(group, -1):
                     log(f"【{group}】读取到 {len(msgs)} 条消息")
@@ -133,10 +150,10 @@ def main():
                 if first_run[group]:
                     log(f"【{group}】首轮登记 {len(msgs)} 条历史消息（不回复）")
                 for m in msgs:
-                    key = getattr(m, "hash", None) or m.id
+                    key = f"{getattr(m, 'sender', '?')}|{m.type}|{getattr(m, 'content', '')}"
                     if key in seen[group]:
                         continue
-                    seen[group].add(key)
+                    seen[group].append(key)
                     if first_run[group] or m.attr != "friend":
                         continue
                     text = describe(m)
