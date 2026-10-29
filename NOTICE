@@ -44,6 +44,9 @@
 - galaxy-b612/astrbot_plugin_group_chat_plus —— 概率参数参考（基础 2% / 回复后 120 秒升至 80%）
 - qa296/astrbot_plugin_reply_directly —— "回复后短暂窗口内追问免@"的沉浸式设计
 - YunYueSama/codex-deepseek-pet —— 大肥鱼角色设定的社区源头之一
+- mtshang/make-your-qq-ai-group-member —— 人格卡 v5 参考其 templates/persona_dafeiyu.md：
+  连发节奏规范（[[next]] 气泡协议的原型）、AI 味黑名单、『用户』彩蛋、你不要/你可以示例对
+  https://github.com/mtshang/make-your-qq-ai-group-member
 
 四、基础设施
 ------------
