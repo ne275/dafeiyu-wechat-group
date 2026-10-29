@@ -91,11 +91,19 @@ def describe(m):
     return None
 
 
-def send(wx, group, text, at=None):
-    """发送出口。dry_run 下只打印不发送。"""
+def send(wx, group, text, at=None, reply_to=None):
+    """发送出口。优先引用原消息（reply_to），失败退回普通发送+@。dry_run 下只打印。"""
     if DRY_RUN:
         log(f"  [影子] 鱼想说: {text[:80]}")
         return
+    if reply_to is not None:
+        try:
+            result = reply_to.quote(text)
+            if result:  # WxResponse 真值 = 成功
+                return
+            log("  （引用失败，退回普通发送）")
+        except Exception as e:
+            log(f"  （引用异常，退回普通发送: {e}）")
     wx.SendMsg(text, who=group, at=at)
 
 
@@ -148,7 +156,7 @@ def main():
                         watch[group]["reactions"].append({"sender": m.sender, "text": m.content[:80]})
                     if reply:
                         log(f"  → 鱼回复({resp.get('mode')}): {reply[:50]}")
-                        send(wx, group, reply, at=m.sender)
+                        send(wx, group, reply, at=m.sender, reply_to=m)
                         if not DRY_RUN:
                             watch[group] = {"reply": reply, "deadline": time.time() + EFFECT_WATCH_SEC,
                                             "reactions": []}
