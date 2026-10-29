@@ -24,7 +24,7 @@ _DEFAULTS = {
     "poll_interval": 3,
     "dry_run": False,
 }
-HAND_VERSION = "4.5"  # 每次行为修改必须递增——日志里用来确认改动是否生效
+HAND_VERSION = "4.6"  # 每次行为修改必须递增——日志里用来确认改动是否生效
 
 _cfg_path = Path(__file__).parent / "config.json"
 _cfg = {**_DEFAULTS, **json.loads(_cfg_path.read_text(encoding="utf-8"))} if _cfg_path.exists() else _DEFAULTS
@@ -230,6 +230,11 @@ def main():
                 # 预览完整性判断：末尾省略号/[图片]/[表情]/[视频] 等 → 不完整，必须进窗口
                 truncated = bool(re.search(r"(…|\.\.\.)\s*$", preview)) or bool(
                     re.search(r"\[(图片|表情|视频|语音|文件|动画表情)\]", preview))
+                # 媒体预览：鱼看不见内容，跳过不回复，但要记账预览避免堵住后续消息
+                if re.search(r"\[(图片|表情|视频|语音|文件|动画表情)\]", preview):
+                    last_preview[group] = preview
+                    log(f"【{group}】媒体消息，跳过（鱼看不见）")
+                    continue
                 has_at_fish = "大肥鱼" in preview
                 if not truncated and not has_at_fish:
                     # 完整短文本：直接用预览构造消息，零窗口渲染成本
