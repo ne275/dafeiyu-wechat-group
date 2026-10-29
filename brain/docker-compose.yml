@@ -10,6 +10,7 @@ services:
     environment:
       FISH_KEY: ${FISH_KEY}                 # 与 hand/config.json 的 fish_key 一致
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+      FISH_DATA_DIR: /data                  # 容器内数据目录（与上面卷挂载对应；本地直跑默认 ./data）
       # 以下为可调参数（默认值已写出，可不设）
       # FISH_MODEL: deepseek-flash
       # FISH_ACTIVE_PERIOD: "600"           # 活跃周期秒数
