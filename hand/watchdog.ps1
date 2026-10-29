@@ -1,4 +1,4 @@
-# 大肥鱼看门狗：鱼手崩溃自动拉起，卡死（心跳超时）强杀重启。
+﻿# 大肥鱼看门狗：鱼手崩溃自动拉起，卡死（心跳超时）强杀重启。
 # 用法：powershell -File watchdog.ps1（建议放入开机自启，见 docs/deploy-windows.md）
 $Hand = Join-Path $PSScriptRoot "fish_hand.py"
 $Heartbeat = Join-Path $PSScriptRoot "fish_heartbeat"
