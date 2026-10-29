@@ -13,7 +13,17 @@ from pathlib import Path
 import requests
 from wxauto4 import WeChat
 
-_cfg = json.loads((Path(__file__).parent / "config.json").read_text(encoding="utf-8"))
+# 优先读同目录 config.json；没有就用下面的内嵌默认值（方便单文件分发）
+_DEFAULTS = {
+    "brain_url": "https://你的域名/fish",
+    "fish_key": "在此填入鱼脑密钥",
+    "groups": ["你的群名（一字不差）"],
+    "bot_name": "大肥鱼",
+    "poll_interval": 3,
+    "dry_run": False,
+}
+_cfg_path = Path(__file__).parent / "config.json"
+_cfg = {**_DEFAULTS, **json.loads(_cfg_path.read_text(encoding="utf-8"))} if _cfg_path.exists() else _DEFAULTS
 BRAIN_URL = _cfg["brain_url"].rstrip("/")
 FISH_KEY = _cfg["fish_key"]
 GROUPS = _cfg["groups"]
