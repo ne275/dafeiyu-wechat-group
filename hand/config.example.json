@@ -3,5 +3,6 @@
   "fish_key": "替换为你部署鱼脑时的 FISH_KEY",
   "groups": ["你的群名（一字不差）"],
   "bot_name": "大肥鱼",
-  "poll_interval": 3
+  "poll_interval": 3,
+  "dry_run": false
 }

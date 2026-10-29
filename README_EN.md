@@ -57,6 +57,8 @@ This section states the boundaries of what the project is, and forms an integral
 - All probabilities and thresholds (wake probability 0.05, 25-second interjection interval, etc.) are heuristic values, not systematically tuned;
 - Personality is driven entirely by prompt engineering, with no model fine-tuning.
 
+**The "AI flavor" remains the largest known shortcoming.** After four persona iterations (community card adaptation → plain-group-member tone → de-AI rules → negative-example anchoring), real group members still readily notice the bot. Remaining tells: overly tidy replies, over-eager engagement, unstable recognition of sarcasm. See the [improvement guide](docs/improvements.md) §5 for the persona iteration roadmap. PRs with more natural prompt writing are welcome.
+
 **Value.** A runnable, fully annotated reference implementation that documents its own defects honestly. It suits developers who want to understand the engineering difficulty of group-chat AI, users running a small private group for fun, and anyone who wants to build on top of it.
 
 ## Features
@@ -70,6 +72,11 @@ This section states the boundaries of what the project is, and forms an integral
 | Self-awareness | The model sees its own past utterances (avoiding repetition) and honestly declares media it cannot parse |
 | Output shaping | Double-parenthesized text is treated as a draft and stripped; meta-narrative sentences removed; overlong replies auto-compressed |
 | Scheduled messages | Fixed daily messages (morning greeting, bedtime reminder) |
+| Planner loop | Proactive speech runs a tool loop: query profile/memory before reply/skip/wait |
+| Person profiles | Per-member profiles updated with memory jobs and injected before replying |
+| Effect tracking | Observes group reactions after speaking and feeds them into future decisions |
+| Jargon learning | Daily log scan for new slang; adopted only after two sightings |
+| Testing | Real-log replay + shadow mode (dry_run) — iterate without disturbing the group |
 | Chat logs | Persistent per-chat, per-date records (JSONL) with a query API |
 | Safeguards | Daily utterance cap, minimum proactive-speech interval, shared-key API authentication |
 
