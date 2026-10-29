@@ -31,6 +31,7 @@ GROUPS = _cfg["groups"]
 BOT_NAME = _cfg.get("bot_name", "大肥鱼")
 POLL_INTERVAL = _cfg.get("poll_interval", 3)
 DRY_RUN = _cfg.get("dry_run", False)  # 影子模式：思考但不对微信发送
+SEND_GAP = _cfg.get("send_gap", 0.3)  # 多气泡连发的技术间隔（防输入框竞争，非表演延迟）
 
 
 _LOG_FILE = Path(__file__).parent / "fish_hand.log"
@@ -238,7 +239,8 @@ def main():
                         if fresh is None:
                             log("  （原消息已失效，退回 @ 发送）")
                         for i, part in enumerate(parts):
-                            time.sleep(min(0.5 + 0.12 * len(part), 4))  # 打字延迟
+                            if i > 0:
+                                time.sleep(SEND_GAP)
                             send(wx, group, part,
                                  at=m.sender if i == 0 else None,
                                  reply_to=fresh if i == 0 else None)
