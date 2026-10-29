@@ -114,6 +114,7 @@ def main():
     seen = {g: set() for g in GROUPS}
     first_run = {g: True for g in GROUPS}
     watch = {}  # group -> {"reply": str, "deadline": float, "reactions": list}
+    last_counts = {}  # 心跳：各群读到的消息数，变化时打印
 
     while True:
         for group in GROUPS:
@@ -126,6 +127,9 @@ def main():
 
                 wx.ChatWith(group)
                 msgs = wx.GetAllMessage()
+                if len(msgs) != last_counts.get(group, -1):
+                    log(f"【{group}】读取到 {len(msgs)} 条消息")
+                    last_counts[group] = len(msgs)
                 if first_run[group]:
                     log(f"【{group}】首轮登记 {len(msgs)} 条历史消息（不回复）")
                 for m in msgs:
