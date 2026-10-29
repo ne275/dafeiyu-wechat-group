@@ -125,6 +125,7 @@ def fresh_message(wx, sender, content):
 def main():
     mode = "影子模式（不发送）" if DRY_RUN else "正式模式"
     log(f"大肥鱼启动 | {mode} | 监听群: {GROUPS} | 每 {POLL_INTERVAL}s 轮询")
+    heartbeat = Path(__file__).parent / "fish_heartbeat"  # 看门狗用：每轮刷新
     wx = WeChat()
     # 新旧消息用「水位线」判断：记住上一条处理过的消息签名，
     # 每轮从列表末尾找它的位置，只处理它后面的。重复内容随便发，互不干扰；
@@ -244,6 +245,7 @@ def main():
                 log(f"⚠️ 本轮耗时 {elapsed:.0f}s（正常<5s）——窗口可能呆滞。"
                     "若持续出现：检查微信窗口是否被最小化、挂机宝是否锁屏；"
                     "Ctrl+C 无响应时用任务管理器结束 python.exe")
+            heartbeat.write_text(str(time.time()), encoding="utf-8")  # 每轮写心跳
             time.sleep(POLL_INTERVAL)
 
 

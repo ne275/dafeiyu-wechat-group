@@ -79,3 +79,18 @@ powercfg /change monitor-timeout-ac 0
 3. Mac/PC 上的安卓模拟器（有风控概率，五五分）
 
 没有底座的话，每次手机切号鱼都会掉线，需要重新扫码。
+
+## 7. 7×24 在线清单（重要）
+
+UI 自动化必须有一个活着的桌面会话，挂机宝重启后按顺序保证：
+
+1. **Windows 自动登录**：`Win+R` 输入 `netplwiz`，取消勾选"要使用本计算机，用户必须输入用户名和密码"，输入 Administrator 密码。重启后桌面自动登录（没有交互桌面，UIA 无法工作）
+2. **微信自启**：微信设置里勾"开机自动启动"+"自动登录该设备"
+3. **看门狗自启**：`Win+R` 输入 `shell:startup`，在打开的文件夹里新建快捷方式指向：
+   `powershell -WindowStyle Hidden -File "C:\路径\watchdog.ps1"`
+   看门狗会负责拉起鱼手、鱼手崩溃自动重启、卡死（心跳超时 150 秒）强杀重启
+4. **电源**：`powercfg /change standby-timeout-ac 0`、`powercfg /change monitor-timeout-ac 0`，
+   控制面板→个性化→锁屏/屏保 关闭
+5. **Windows Update**：设置→更新→使用时段，避开你在意的时段；挂机宝商家一般也不推送
+
+日常维护：**任何时候别点"注销"、别最小化微信窗口、断开远程桌面用窗口 ×**。
