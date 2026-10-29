@@ -27,6 +27,8 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
+BRAIN_VERSION = "4.2"  # 行为修改必须递增——/fish/health 里可验证
+
 PERSONA = (BASE_DIR / "persona.txt").read_text(encoding="utf-8")
 _memes_path = BASE_DIR / "memes.txt"
 MEMES = _memes_path.read_text(encoding="utf-8") if _memes_path.exists() else ""
@@ -583,6 +585,7 @@ def health():
     now = time.time()
     return {
         "status": "ok",
+        "version": BRAIN_VERSION,
         "model": MODEL,
         "daily": dict(daily_count),
         "active_groups": {g: round(t - now) for g, t in active_until.items() if t > now},

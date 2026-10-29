@@ -12,6 +12,8 @@ from pathlib import Path
 
 import requests
 
+WATCHDOG_VERSION = "1.1"  # 行为修改必须递增
+
 BASE = Path(__file__).parent
 HAND = BASE / "fish_hand.py"
 HEARTBEAT = BASE / "fish_heartbeat"
@@ -53,7 +55,7 @@ def update_hand():
 
 
 def main():
-    log(f"看门狗上线，监视 {HAND}")
+    log(f"看门狗上线 v{WATCHDOG_VERSION}，监视 {HAND}")
     while True:
         update_hand()
         HEARTBEAT.unlink(missing_ok=True)

@@ -24,6 +24,8 @@ _DEFAULTS = {
     "poll_interval": 3,
     "dry_run": False,
 }
+HAND_VERSION = "4.2"  # 每次行为修改必须递增——日志里用来确认改动是否生效
+
 _cfg_path = Path(__file__).parent / "config.json"
 _cfg = {**_DEFAULTS, **json.loads(_cfg_path.read_text(encoding="utf-8"))} if _cfg_path.exists() else _DEFAULTS
 BRAIN_URL = _cfg["brain_url"].rstrip("/")
@@ -190,7 +192,7 @@ def fresh_message(wx, sender, content):
 
 def main():
     mode = "影子模式（不发送）" if DRY_RUN else "正式模式"
-    log(f"大肥鱼启动 | {mode} | 监听群: {GROUPS} | 每 {POLL_INTERVAL}s 轮询")
+    log(f"大肥鱼启动 v{HAND_VERSION} | {mode} | 监听群: {GROUPS} | 每 {POLL_INTERVAL}s 轮询")
     heartbeat = Path(__file__).parent / "fish_heartbeat"  # 看门狗用：每轮刷新
     wx = WeChat()
     # 新旧消息用「水位线」判断：记住上一条处理过的消息签名，
