@@ -6,6 +6,7 @@
 环境：Windows + 微信 PC 客户端 <= 4.1.8.107（免费版 wxauto4 上限），关闭微信自动更新
 """
 import json
+import re
 import time
 import traceback
 from collections import deque
@@ -29,9 +30,16 @@ BRAIN_URL = _cfg["brain_url"].rstrip("/")
 FISH_KEY = _cfg["fish_key"]
 GROUPS = _cfg["groups"]
 BOT_NAME = _cfg.get("bot_name", "大肥鱼")
-POLL_INTERVAL = _cfg.get("poll_interval", 3)
+POLL_INTERVAL = _cfg.get("poll_interval", 1)
 DRY_RUN = _cfg.get("dry_run", False)  # 影子模式：思考但不对微信发送
 SEND_GAP = _cfg.get("send_gap", 0.3)  # 多气泡连发的技术间隔（防输入框竞争，非表演延迟）
+
+# 尽量拉大聊天窗口（挂机宝虚拟显示器可能限制实际高度，设了不坏）
+try:
+    from wxauto4.param import WxParam
+    WxParam.CHAT_WINDOW_SIZE = (1200, 4800)
+except Exception:
+    pass
 
 
 _LOG_FILE = Path(__file__).parent / "fish_hand.log"
@@ -246,7 +254,14 @@ def main():
                 prev_anchor = last_sig[group]
                 new_msgs, new_anchor = pick_new_messages(msgs, prev_anchor)
                 if prev_anchor is not None and not new_msgs and new_anchor != prev_anchor:
-                    log(f"【{group}】水位线丢失，重新锚定（期间消息可能漏过）")
+                    log(f"【{group}】水位线丢失，用会话预览兜底（内容可能截断）")
+                    # 兜底：预览形如「[3条]张三: 内容」或「张三: 内容」，当作一条新消息处理
+                    m2 = re.match(r"^(?:\[\d+条\])?([^:：]+)[:：]\s*(.+)$", preview or "")
+                    if m2:
+                        pseudo = type("PseudoMsg", (), {"sender": m2.group(1).strip(),
+                                                        "content": m2.group(2).strip(),
+                                                        "attr": "friend", "type": "text"})()
+                        new_msgs = [pseudo]
                 last_sig[group] = new_anchor
                 for m in new_msgs:
                     if m.attr != "friend":
