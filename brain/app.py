@@ -176,6 +176,10 @@ def outbound_eraser(text: str) -> str:
     # 撕掉（（双层括号草稿））
     text = re.sub(r"（（.*?））", "", text, flags=re.S)
     text = re.sub(r"\(\(.*?\)\)", "", text, flags=re.S)
+    # 剥掉草稿残渣的“说「...」”/「说“...”」外壳
+    m = re.match(r'^\s*说\s*[“"「](.*)[”"」]\s*$', text.strip(), flags=re.S)
+    if m:
+        text = m.group(1).strip()
     # 擦 meta 口癖句
     for pat in META_PATTERNS:
         text = re.sub(r"[^。！？\n]*" + re.escape(pat) + r"[^。！？\n]*[。！？]?", "", text)
@@ -298,12 +302,18 @@ async def compose_reply(msg: GroupMessage, mode: str) -> str | None:
                 "3. 不值得接，或你最近说过类似意思 → 只回复两个字：跳过")
     answer = await call_deepseek(system_prompt(msg.group), user)
     answer = outbound_eraser(answer)
-    # 超长压缩（草稿+校对）
+    # 超长压缩（草稿+校对），压缩后断尾兜底
     if answer and len(answer) > 150:
-        answer = await call_deepseek(
+        compressed = await call_deepseek(
             system_prompt(msg.group),
-            f"把下面这段你要说的话压缩到 60 字以内，保持语气不变，只输出压缩后的内容：\n{answer}")
-        answer = outbound_eraser(answer)
+            f"把下面这段话压缩到 60 字以内，保持语气，必须是完整句子，只输出压缩后的内容：\n{answer}")
+        compressed = outbound_eraser(compressed)
+        if compressed and compressed[-1] not in "。！？!?~…":
+            # 截断不完整句：退到最后一个完整句末
+            cut = max(compressed.rfind(p) for p in "。！？!?~…")
+            compressed = compressed[:cut + 1] if cut >= 8 else answer[:150]
+        if compressed:
+            answer = compressed
     return answer or None
 
 
