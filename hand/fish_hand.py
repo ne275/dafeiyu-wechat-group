@@ -108,6 +108,20 @@ def send(wx, group, text, at=None, reply_to=None):
     wx.SendMsg(text, who=group, at=at)
 
 
+def fresh_message(wx, sender, content):
+    """回复前重新读列表，按发送者+内容找该消息的新鲜 UI 对象。
+    微信 4.x 的消息对象在滚动后会失效，鱼脑思考的几十秒里对象可能已易主，
+    直接用旧对象引用会挂到别人的消息上（回复错人）。"""
+    try:
+        for m in reversed(wx.GetAllMessage()):
+            if (m.attr == "friend" and getattr(m, "sender", None) == sender
+                    and getattr(m, "content", "") == content):
+                return m
+    except Exception:
+        pass
+    return None
+
+
 def main():
     mode = "影子模式（不发送）" if DRY_RUN else "正式模式"
     log(f"大肥鱼启动 | {mode} | 监听群: {GROUPS} | 每 {POLL_INTERVAL}s 轮询")
@@ -120,6 +134,8 @@ def main():
     watch = {}  # group -> {"reply": str, "deadline": float, "reactions": list}
     last_counts = {}  # 心跳：各群读到的消息数，变化时打印
     last_preview = {}  # 会话列表哨兵：各群最新消息预览（不受聊天窗口视口卡滞影响）
+    idle_cycles = {g: 0 for g in GROUPS}  # 连续未进群的轮数（用于窗口保活）
+    MAINTENANCE_EVERY = 60               # 每 60 轮（~3分钟）强制保养一次窗口
 
     while True:
         for group in GROUPS:
@@ -140,8 +156,16 @@ def main():
                             break
                 except Exception:
                     pass
+                cycle_start = time.time()
                 if preview is None or preview == last_preview.get(group):
-                    continue  # 无新消息迹象，跳过本轮（不打扰窗口）
+                    idle_cycles[group] += 1
+                    if idle_cycles[group] < MAINTENANCE_EVERY:
+                        continue  # 无新消息迹象，跳过本轮
+                    # 窗口保养：长时间不动可能导致视口/渲染呆滞，定期强制重进
+                    idle_cycles[group] = 0
+                    wx.ChatWith(group, force=True)
+                    continue
+                idle_cycles[group] = 0
                 last_preview[group] = preview
                 wx.ChatWith(group, force=True)
                 msgs = wx.GetAllMessage()
@@ -195,7 +219,10 @@ def main():
                         watch[group]["reactions"].append({"sender": m.sender, "text": m.content[:80]})
                     if reply:
                         log(f"  → 鱼回复({resp.get('mode')}): {reply[:50]}")
-                        send(wx, group, reply, at=m.sender, reply_to=m)
+                        fresh = fresh_message(wx, m.sender, getattr(m, "content", ""))
+                        if fresh is None:
+                            log("  （原消息已失效，退回 @ 发送）")
+                        send(wx, group, reply, at=m.sender, reply_to=fresh)
                         if not DRY_RUN:
                             watch[group] = {"reply": reply, "deadline": time.time() + EFFECT_WATCH_SEC,
                                             "reactions": []}
@@ -212,6 +239,11 @@ def main():
             except Exception:
                 log(f"【{group}】轮询出错:")
                 traceback.print_exc()
+            elapsed = time.time() - cycle_start
+            if elapsed > 20:
+                log(f"⚠️ 本轮耗时 {elapsed:.0f}s（正常<5s）——窗口可能呆滞。"
+                    "若持续出现：检查微信窗口是否被最小化、挂机宝是否锁屏；"
+                    "Ctrl+C 无响应时用任务管理器结束 python.exe")
             time.sleep(POLL_INTERVAL)
 
 
