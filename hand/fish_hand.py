@@ -172,6 +172,8 @@ def main():
                 except Exception:
                     pass
                 cycle_start = time.time()
+                pt = PhaseTimer(group)
+                pt.mark("GetSession")
                 if preview is None or preview == last_preview.get(group):
                     idle_cycles[group] += 1
                     if idle_cycles[group] < MAINTENANCE_EVERY:
@@ -183,7 +185,9 @@ def main():
                 idle_cycles[group] = 0
                 last_preview[group] = preview
                 wx.ChatWith(group, force=True)
+                pt.mark("ChatWith")
                 msgs = wx.GetAllMessage()
+                pt.mark("GetAllMessage")
                 if len(msgs) != last_counts.get(group, -1):
                     log(f"【{group}】读取到 {len(msgs)} 条消息")
                     last_counts[group] = len(msgs)
@@ -228,6 +232,7 @@ def main():
                         "group": group, "sender": m.sender,
                         "text": text, "mention": mention,
                     })
+                    pt.mark("问鱼脑")
                     reply = resp.get("reply")
                     # 效果追踪：鱼发言后 60s 内的群消息都记为反应
                     if group in watch and m.attr == "friend":
@@ -261,6 +266,7 @@ def main():
                 log(f"【{group}】轮询出错:")
                 traceback.print_exc()
             elapsed = time.time() - cycle_start
+            pt.report_slow()
             if elapsed > 20:
                 log(f"⚠️ 本轮耗时 {elapsed:.0f}s（正常<5s）——窗口可能呆滞。"
                     "若持续出现：检查微信窗口是否被最小化、挂机宝是否锁屏；"
