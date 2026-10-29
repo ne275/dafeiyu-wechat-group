@@ -76,6 +76,34 @@ def report_effect(group, reply, reactions):
         pass
 
 
+def sig_of(m):
+    """消息签名：属性|发送者|类型|内容前80字。不含 UI id（重渲染后会变）。"""
+    return f"{getattr(m, 'attr', '?')}|{getattr(m, 'sender', '?')}|{m.type}|{getattr(m, 'content', '')[:80]}"
+
+
+def pick_new_messages(msgs, last_sig):
+    """水位线纯函数：返回（新消息列表, 新水位线）。
+    水位线 = 末尾两条消息的签名对（防『新消息与锚点同内容』的歧义）。
+    首轮（last_sig=None）返回全量当历史处理。锚点丢失时重新锚定并返回空。"""
+    if not msgs:
+        return [], last_sig
+
+    def pair_at(i):  # 以 msgs[i] 结尾的消息对签名
+        prev = sig_of(msgs[i - 1]) if i > 0 else "<头>"
+        return prev + "␟" + sig_of(msgs[i])
+
+    if last_sig is None:
+        return list(msgs), pair_at(len(msgs) - 1)
+    idx = -1
+    for i in range(len(msgs) - 1, -1, -1):
+        if pair_at(i) == last_sig:
+            idx = i
+            break
+    if idx < 0:
+        return [], pair_at(len(msgs) - 1)  # 水位线丢失：重新锚定
+    return list(msgs[idx + 1:]), pair_at(len(msgs) - 1)
+
+
 class PhaseTimer:
     """分阶段计时：找出 UIA 卡顿的具体环节。"""
     def __init__(self, group):
@@ -207,29 +235,19 @@ def main():
                 if len(msgs) != last_counts.get(group, -1):
                     log(f"【{group}】读取到 {len(msgs)} 条消息")
                     last_counts[group] = len(msgs)
-                def sig(m):
-                    return f"{getattr(m, 'attr', '?')}|{getattr(m, 'sender', '?')}|{m.type}|{getattr(m, 'content', '')[:80]}"
-
-                if first_run[group] or last_sig[group] is None:
+                if first_run[group]:
                     log(f"【{group}】首轮登记 {len(msgs)} 条历史消息（不回复）")
                     if msgs:
-                        last_sig[group] = sig(msgs[-1])
+                        last_sig[group] = sig_of(msgs[-1])
                     first_run[group] = False
                     continue
 
-                # 从末尾找水位线位置，只处理它后面的消息
-                idx = -1
-                for i in range(len(msgs) - 1, -1, -1):
-                    if sig(msgs[i]) == last_sig[group]:
-                        idx = i
-                        break
-                if idx < 0:
+                # 水位线：只处理上一条已处理消息之后的新消息（纯函数，见 pick_new_messages）
+                prev_anchor = last_sig[group]
+                new_msgs, new_anchor = pick_new_messages(msgs, prev_anchor)
+                if prev_anchor is not None and not new_msgs and new_anchor != prev_anchor:
                     log(f"【{group}】水位线丢失，重新锚定（期间消息可能漏过）")
-                    last_sig[group] = sig(msgs[-1]) if msgs else last_sig[group]
-                    continue
-                new_msgs = msgs[idx + 1:]
-                if new_msgs:
-                    last_sig[group] = sig(new_msgs[-1])
+                last_sig[group] = new_anchor
                 for m in new_msgs:
                     if m.attr != "friend":
                         continue
