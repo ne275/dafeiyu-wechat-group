@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-BRAIN_VERSION = "4.12"  # 行为修改必须递增——/fish/health 里可验证
+BRAIN_VERSION = "4.13"  # 行为修改必须递增——/fish/health 里可验证
 
 # 人格库：personas/<name>.txt；选择持久化在 data/persona_select.json，支持热切换
 PERSONA_DIR = BASE_DIR / "personas"
@@ -207,7 +207,9 @@ async def planner_active(msg: GroupMessage, context: str, sender_tag: str) -> tu
     判断用瘦 prompt（不带人格卡/热梗，省 prefill）；决定说话后再用完整人格生成。"""
     judge_system = (
         "你在替一个群聊机器人做判断：群里每条消息决定【接话 / 沉默 / 等对方说完】。\n"
-        "原则：不每条都接；对方半截话就等；和你无关的闲聊多数沉默。\n"
+        "原则：不每条都接，别刷屏；但**被夸、被感谢、被问问题、有人需要帮忙、有人@你，一般都要接**。\n"
+        "对方半截话（比如只发了“在吗”）就等；和你完全无关的闲聊多数沉默。\n"
+        f"【你现在的状态】{mood_text()}\n\n"
         + (f"【这个群的近期话题】\n{memory['groups'].get(msg.group, {}).get('summary')}\n\n"
            if memory["groups"].get(msg.group, {}).get("summary") else ""))
     messages = [
