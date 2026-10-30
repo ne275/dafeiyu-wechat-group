@@ -23,8 +23,8 @@ def handle(msg) -> str | None:
                       params={"q": q}, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
         html = r.text
         # result-link 标题+链接，result-snippet 摘要
-        links = re.findall(r'class="result-link"[^>]*>(.*?)</a>', html, re.S)
-        snippets = re.findall(r'class="result-snippet"[^>]*>(.*?)</td>', html, re.S)
+        links = re.findall(r"class=['\"]result-link['\"][^>]*>(.*?)</a>", html, re.S)
+        snippets = re.findall(r"class=['\"]result-snippet['\"][^>]*>(.*?)</td>", html, re.S)
         if not links:
             return f"没搜到「{q}」相关结果，换个词试试"
         def clean(s):
