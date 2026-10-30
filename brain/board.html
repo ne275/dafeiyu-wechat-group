@@ -36,6 +36,19 @@
 </div>
 <h1>活跃与记忆</h1>
 <div id="groups"><span class="dim">尚无数据</span></div>
+
+<h1>记忆管理</h1>
+<div class="card" style="margin-top:8px">
+  <select id="memgroup"></select>
+  <button onclick="viewMem()">查看记忆</button>
+  <div id="memview" style="margin-top:10px;white-space:pre-wrap;font-size:13px"></div>
+  <div style="margin-top:10px" id="memops" hidden>
+    <button style="background:#9e6a03" onclick="delMem('summary')">清话题</button>
+    <button style="background:#9e6a03" onclick="delMem('members')">清画像</button>
+    <button style="background:#da3633" onclick="delMem('all')">删除此群全部记忆</button>
+    <span id="memmsg" class="dim"></span>
+  </div>
+</div>
 <div class="dim" style="margin-top:16px">每 10 秒自动刷新 · 数据来自 /fish/stats</div>
 <script>
 const keyInput = document.getElementById('key');
@@ -55,6 +68,10 @@ async function load() {
     document.getElementById('avg').textContent = d.latency_avg_ms;
     document.getElementById('p95').textContent = d.latency_p95_ms;
     document.getElementById('jargon').textContent = d.jargon_learned;
+    const sel = document.getElementById('memgroup');
+    const prev = sel.value;
+    sel.innerHTML = (d.memory_groups || []).map(g => `<option>${g}</option>`).join('');
+    if (prev) sel.value = prev;
     const g = document.getElementById('groups');
     const act = Object.entries(d.active_groups || {});
     const mems = d.memory_groups || [];
@@ -70,6 +87,32 @@ async function load() {
   } catch (e) { document.getElementById('status').textContent = ' 错误: ' + e; }
 }
 load(); setInterval(load, 10000);
+
+async function viewMem() {
+  const g = document.getElementById('memgroup').value;
+  if (!g) return;
+  const r = await fetch('memory?group=' + encodeURIComponent(g), {headers: {'X-Fish-Key': keyInput.value}});
+  const d = await r.json();
+  let txt = '【近期话题】\n' + (d.summary || '（无）') + '\n\n【成员画像】\n';
+  const ms = Object.entries(d.members || {});
+  txt += ms.length ? ms.map(([k, v]) => k + '：' + v).join('\n') : '（无）';
+  document.getElementById('memview').textContent = txt;
+  document.getElementById('memops').hidden = false;
+}
+
+async function delMem(target) {
+  const g = document.getElementById('memgroup').value;
+  if (!g) return;
+  if (target === 'all' && !confirm('确定删除「' + g + '」的全部记忆？不可恢复')) return;
+  const r = await fetch('memory/delete', {
+    method: 'POST',
+    headers: {'X-Fish-Key': keyInput.value, 'Content-Type': 'application/json'},
+    body: JSON.stringify({group: g, target: target}),
+  });
+  const d = await r.json();
+  document.getElementById('memmsg').textContent = d.deleted ? ' 已删除' : ' 未删除（无记忆）';
+  viewMem();
+}
 </script>
 </body>
 </html>

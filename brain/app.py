@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-BRAIN_VERSION = "4.7"  # 行为修改必须递增——/fish/health 里可验证
+BRAIN_VERSION = "4.8"  # 行为修改必须递增——/fish/health 里可验证
 
 # 人格库：personas/<name>.txt；选择持久化在 data/persona_select.json，支持热切换
 PERSONA_DIR = BASE_DIR / "personas"
@@ -707,6 +707,35 @@ def get_memory(group: str = Query(...), x_fish_key: str = Header(default="")):
     gm = memory["groups"].get(group, {})
     return {"group": group, "summary": gm.get("summary", ""),
             "members": gm.get("members", {}), "effects": gm.get("effects", [])}
+
+
+class MemoryDelete(BaseModel):
+    group: str
+    target: str = "all"   # all / summary / members / effects
+    member: str = ""      # target=members 且指定成员时只删该成员画像
+
+
+@app.post("/fish/memory/delete")
+def delete_memory(req: MemoryDelete, x_fish_key: str = Header(default="")):
+    if x_fish_key != FISH_KEY:
+        raise HTTPException(status_code=403)
+    gm = memory["groups"].get(req.group)
+    if gm is None:
+        return {"deleted": False, "reason": "该群无记忆"}
+    if req.target == "all":
+        memory["groups"].pop(req.group, None)
+    elif req.target == "summary":
+        gm["summary"] = ""
+        gm["summary_time"] = ""
+    elif req.target == "members":
+        if req.member:
+            gm.get("members", {}).pop(req.member, None)
+        else:
+            gm["members"] = {}
+    elif req.target == "effects":
+        gm["effects"] = []
+    save_memory()
+    return {"deleted": True, "group": req.group, "target": req.target, "member": req.member}
 
 
 @app.get("/fish/health")
