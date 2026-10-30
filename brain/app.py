@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-BRAIN_VERSION = "4.5"  # 行为修改必须递增——/fish/health 里可验证
+BRAIN_VERSION = "4.6"  # 行为修改必须递增——/fish/health 里可验证
 
 # 人格库：personas/<name>.txt；选择持久化在 data/persona_select.json，支持热切换
 PERSONA_DIR = BASE_DIR / "personas"
@@ -333,7 +333,10 @@ def system_prompt(group: str) -> str:
     mem = memory["groups"].get(group, {}).get("summary")
     if mem:
         today = time.strftime("%Y-%m-%d", time.gmtime(time.time() + TZ_OFFSET))
-        parts.append(f"【你的记忆】（截至目前的群聊沉淀，今天日期 {today}）\n{mem}")
+        parts.append(
+            f"【你脑海里关于这个群的印象】（{today}）\n{mem}\n"
+            "（这些是你自己慢慢攒下的印象。聊到时像老朋友一样自然提起一两句，"
+            "别背出来、别汇报，没人问也别主动秀。）")
     return "\n\n".join(parts)
 
 
@@ -691,6 +694,16 @@ def switch_persona(sel: PersonaSelect, x_fish_key: str = Header(default="")):
     (DATA_DIR / "persona_select.json").write_text(
         json.dumps({"name": sel.name}, ensure_ascii=False), encoding="utf-8")
     return {"current": sel.name, "note": "立即生效，无需重启"}
+
+
+@app.get("/fish/memory")
+def get_memory(group: str = Query(...), x_fish_key: str = Header(default="")):
+    """查看某群的完整记忆（话题、成员画像、效果追踪）。"""
+    if x_fish_key != FISH_KEY:
+        raise HTTPException(status_code=403)
+    gm = memory["groups"].get(group, {})
+    return {"group": group, "summary": gm.get("summary", ""),
+            "members": gm.get("members", {}), "effects": gm.get("effects", [])}
 
 
 @app.get("/fish/health")
