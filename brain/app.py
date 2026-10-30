@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-BRAIN_VERSION = "4.11"  # 行为修改必须递增——/fish/health 里可验证
+BRAIN_VERSION = "4.12"  # 行为修改必须递增——/fish/health 里可验证
 
 # 人格库：personas/<name>.txt；选择持久化在 data/persona_select.json，支持热切换
 PERSONA_DIR = BASE_DIR / "personas"
@@ -434,6 +434,12 @@ def decide_reply(msg: GroupMessage) -> str | None:
     if daily_count[time.strftime("%F")] >= DAILY_CAP:
         return None
     now = time.time()
+    # 被夸/被感谢：像被叫名字一样必回（不受主动间隔限制，傲娇一下也行）
+    PRAISE_WORDS = ("你很棒", "你很厉害", "谢谢", "爱你", "喜欢你", "辛苦了", "好可爱", "太可爱", "已经很棒了")
+    if any(w in msg.text for w in PRAISE_WORDS):
+        active_until[msg.group] = now + ACTIVE_PERIOD_SEC
+        skip_streak[msg.group] = 0
+        return "mention"
     # 占位消息（图/表情/语音等）只进上下文，不触发主动接话；
     # 但带真实图片的（image_b64 非空）可以正常评估
     if msg.text.startswith("[对方发来") and not msg.image_b64:
