@@ -8,3 +8,7 @@ brain/data/
 __pycache__/
 *.pyc
 .DS_Store
+
+# 评审与测试文档（不公开）
+docs/persona_review.md
+tests/dialogue_cases.json
