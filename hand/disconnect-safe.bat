@@ -4,7 +4,7 @@ REM Must run as Administrator (right-click -> Run as administrator if this says 
 fltmc >nul 2>&1
 if %errorlevel% neq 0 (
   echo [ERROR] Not administrator. Right-click this file -^> Run as administrator.
-  pause
+  timeout /t 2 >nul
   exit /b 1
 )
 tscon %SESSIONNAME% /dest:console
@@ -13,4 +13,4 @@ if %errorlevel% equ 0 (
 ) else (
   echo [FAIL] tscon error %errorlevel%
 )
-pause
+timeout /t 2 >nul
