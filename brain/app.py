@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-BRAIN_VERSION = "4.10"  # 行为修改必须递增——/fish/health 里可验证
+BRAIN_VERSION = "4.11"  # 行为修改必须递增——/fish/health 里可验证
 
 # 人格库：personas/<name>.txt；选择持久化在 data/persona_select.json，支持热切换
 PERSONA_DIR = BASE_DIR / "personas"
@@ -324,7 +324,7 @@ async def call_deepseek(system: str, user: str, image_b64: str = "") -> str:
 
 def system_prompt(group: str) -> str:
     now_str = time.strftime("%Y-%m-%d %H:%M", time.gmtime(time.time() + TZ_OFFSET))
-    parts = [get_persona(), f"【当前时间】{now_str}（东八区）"]
+    parts = [get_persona(), f"【当前时间】{now_str}（东八区）", f"【你现在的状态】{mood_text()}"]
     if MEMES:
         parts.append(MEMES)
     learned = memory.get("jargon", {})
@@ -493,6 +493,11 @@ async def group_message(msg: GroupMessage, x_fish_key: str = Header(default=""))
             continue
     mode = decide_reply(msg)
     log_chat(msg.group, {"sender": msg.sender, "text": msg.text, "mention": msg.mention, "mode": mode})
+    low = msg.text.lower()
+    if any(w in msg.text for w in ("可爱", "谢谢", "喜欢", "好耶", "爱你")):
+        mood_event("praise")
+    elif any(w in msg.text for w in ("笨", "傻", "滚", "蠢", "废物")):
+        mood_event("roast")
     history[msg.group].append({"sender": msg.sender, "text": msg.text, "ts": msg.ts})
     summary_buf[msg.group].append({"sender": msg.sender, "text": msg.text, "ts": msg.ts})
     gm = memory["groups"].setdefault(msg.group, {})
@@ -526,6 +531,7 @@ async def group_message(msg: GroupMessage, x_fish_key: str = Header(default=""))
     if mode == "active":
         last_active_reply[msg.group] = time.time()
     daily_count[time.strftime("%F")] += 1
+    mood_event("speak")
     latency_ms = int((time.time() - t0) * 1000)
     record_stats(mode, latency_ms, llm_ms)
     history[msg.group].append({"sender": "大肥鱼", "text": answer,
@@ -585,6 +591,37 @@ async def jargon_job():
             save_memory()
         except Exception:
             pass
+
+
+# ---------- 情绪状态机 ----------
+def mood() -> dict:
+    return memory.setdefault("mood", {"valence": 0, "energy": 100})
+
+
+def mood_event(kind: str):
+    """事件影响情绪：praise 被夸 / roast 被怼 / speak 发言 / tick 自然恢复。"""
+    m = mood()
+    if kind == "praise":
+        m["valence"] = min(100, m["valence"] + 6)
+    elif kind == "roast":
+        m["valence"] = max(-100, m["valence"] - 6)
+    elif kind == "speak":
+        m["energy"] = max(0, m["energy"] - 2)
+    elif kind == "tick":
+        m["energy"] = min(100, m["energy"] + 5)
+    save_memory()
+
+
+def mood_text() -> str:
+    m = mood()
+    v, e = m["valence"], m["energy"]
+    hour = time.gmtime(time.time() + TZ_OFFSET).tm_hour
+    feel = "不错" if v > 20 else "有点烦" if v < -20 else "一般"
+    if hour >= 23 or hour < 7:
+        energy = "深夜了，有点困"
+    else:
+        energy = "充沛" if e > 60 else "还行" if e > 30 else "有点累"
+    return f"心情{feel}，{energy}"
 
 
 # ---------- 自主日程（B 站等） ----------
@@ -680,6 +717,11 @@ async def cron_loop():
         now = time.time() + TZ_OFFSET
         lt = time.gmtime(now)
         today = time.strftime("%Y-%m-%d", lt)
+        # 情绪自然恢复（每小时 +5 精力）
+        last_tick = memory.get("_mood_tick", 0)
+        if time.time() - last_tick > 3600:
+            memory["_mood_tick"] = time.time()
+            mood_event("tick")
         # 黑话学习任务（每日 23:00）
         if lt.tm_hour == 23 and lt.tm_min == 0:
             fired_j = memory.setdefault("_cron", {})
