@@ -460,7 +460,8 @@ async def planner_mention(msg: GroupMessage, context: str, sender_tag: str) -> s
             f"【群聊记录】\n{context}\n\n{sender_tag} 对你说话：{msg.text}\n"
             "认真回答。遇到不懂或时事，先用 web_search 查再答；"
             "被要求逛 B 站/找视频时用 browse_bilibili。"
-            "最后必须用 reply 工具给出你的回复（一两句，可 [[next]] 连发）。")},
+            "最后必须用 reply 工具给出你的回复。"
+            "闲聊一两句；如果对方要推荐/介绍/查资料，可以分 2-3 条气泡把要点说全（用 [[next]] 分隔），别只答一句。")},
     ]
     for _ in range(3):
         try:
@@ -520,8 +521,8 @@ async def compose_reply(msg: GroupMessage, mode: str) -> str | None:
         user += "\n\n（这条消息带一张图片，就在上面，你看得到它。根据图片内容自然地回应，别描述得太正式。）"
     answer = await call_deepseek(system_prompt(msg.group), user, image_b64=msg.image_b64)
     answer = outbound_eraser(answer)
-    # 超长压缩（草稿+校对），压缩后断尾兜底
-    if answer and len(answer) > 150:
+    # 超长压缩（草稿+校对），压缩后断尾兜底；推荐/讲解类内容放宽到 300 字
+    if answer and len(answer) > 300:
         compressed = await call_deepseek(
             system_prompt(msg.group),
             f"把下面这段话压缩到 60 字以内，保持语气，必须是完整句子，只输出压缩后的内容：\n{answer}")
