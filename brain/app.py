@@ -122,6 +122,41 @@ class EffectReport(BaseModel):
     reactions: list[dict] = []  # [{"sender":..., "text":...}]
 
 
+def ddg_search(query: str, n: int = 3) -> str:
+    """DuckDuckGo lite 搜索，返回摘要文本（供 Planner 工具调用）。"""
+    try:
+        r = httpx.get("https://lite.duckduckgo.com/lite/",
+                      params={"q": query}, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        html = r.text
+        links = re.findall(r"class=['\"]result-link['\"][^>]*>(.*?)</a>", html, re.S)
+        snippets = re.findall(r"class=['\"]result-snippet['\"][^>]*>(.*?)</td>", html, re.S)
+        def clean(s):
+            return re.sub(r"<[^>]+>", "", s).strip()
+        if not links:
+            return "（没搜到结果）"
+        return "；".join(f"{clean(t)}（{clean(snippets[i])[:60] if i < len(snippets) else ''}）" for i, t in enumerate(links[:n]))
+    except Exception as e:
+        return f"（搜索失败：{e}）"
+
+
+async def tool_result(name: str, args: dict, msg) -> str:
+    """Planner 工具统一分发。"""
+    if name == "query_profile":
+        return sender_profile(msg.group, args.get("name", "")) or "（没有这人的画像）"
+    if name == "query_memory":
+        return memory["groups"].get(msg.group, {}).get("summary") or "（还没有记忆）"
+    if name == "web_search":
+        return ddg_search(args.get("query", ""))
+    if name == "browse_bilibili":
+        await bilibili_watch(msg.group)
+        w = memory["groups"].get(msg.group, {}).get("watched", [])
+        if w:
+            v = w[0]
+            return f"你刷到了《{v['title']}》（UP主:{v['up']}），简介：{v['desc'][:100]}，热评：{v['comments'][:2]}，链接 https://www.bilibili.com/video/{v['bvid']}"
+        return "（没刷到合适的）"
+    return "（未知工具）"
+
+
 # ---------- Planner 工具循环（active 模式） ----------
 TOOLS = [
     {"type": "function", "function": {"name": "reply",
@@ -141,6 +176,14 @@ TOOLS = [
                     "required": ["name"]}}},
     {"type": "function", "function": {"name": "query_memory",
      "description": "查看这个群的近期话题记忆",
+     "parameters": {"type": "object", "properties": {}}}},
+    {"type": "function", "function": {"name": "web_search",
+     "description": "遇到不懂的、时事、新东西、不确定的事实时，联网搜索",
+     "parameters": {"type": "object",
+                    "properties": {"query": {"type": "string", "description": "搜索关键词"}},
+                    "required": ["query"]}}},
+    {"type": "function", "function": {"name": "browse_bilibili",
+     "description": "去 B 站逛一圈，按群近期话题挑个相关视频看看（被叫刷 B 站或想找视频时用）",
      "parameters": {"type": "object", "properties": {}}}},
 ]
 
@@ -198,10 +241,7 @@ async def planner_active(msg: GroupMessage, context: str, sender_tag: str) -> tu
                 return "skip", None
             if name == "wait":
                 return "wait", None
-            if name == "query_profile":
-                result = sender_profile(msg.group, args.get("name", "")) or "（没有这人的画像）"
-            else:  # query_memory
-                result = memory["groups"].get(msg.group, {}).get("summary") or "（还没有记忆）"
+            result = await tool_result(name, args, msg)
             messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
         if draft is not None:
             break
@@ -412,6 +452,48 @@ def decide_reply(msg: GroupMessage) -> str | None:
     return None
 
 
+async def planner_mention(msg: GroupMessage, context: str, sender_tag: str) -> str | None:
+    """mention 的工具循环应答：可 web_search 查证、可 browse_bilibili 被叫刷 B 站。"""
+    messages = [
+        {"role": "system", "content": system_prompt(msg.group)},
+        {"role": "user", "content": (
+            f"【群聊记录】\n{context}\n\n{sender_tag} 对你说话：{msg.text}\n"
+            "认真回答。遇到不懂或时事，先用 web_search 查再答；"
+            "被要求逛 B 站/找视频时用 browse_bilibili。"
+            "最后必须用 reply 工具给出你的回复（一两句，可 [[next]] 连发）。")},
+    ]
+    for _ in range(3):
+        try:
+            resp = await call_deepseek_tools(messages)
+        except Exception:
+            return None
+        m = resp["choices"][0]["message"]
+        if not m.get("tool_calls"):
+            content = (m.get("content") or "").strip()
+            if content:
+                return outbound_eraser(content)
+            break  # 空内容：跳出走兜底
+        messages.append(m)
+        for tc in m["tool_calls"]:
+            name = tc["function"]["name"]
+            args = json.loads(tc["function"].get("arguments") or "{}")
+            if name == "reply":
+                text = args.get("text", "").strip()
+                if text:
+                    return outbound_eraser(text)
+                break
+            result = await tool_result(name, args, msg)
+            messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+    # 兜底：不用工具，直接生成一句
+    try:
+        fallback = await call_deepseek(
+            system_prompt(msg.group),
+            f"{sender_tag} 对你说话：{msg.text}\n认真简短地回答。")
+        return outbound_eraser(fallback) or None
+    except Exception:
+        return None
+
+
 async def compose_reply(msg: GroupMessage, mode: str) -> str | None:
     lines = [f"{m['sender']}: {m['text']}" for m in history[msg.group]]
     context = "\n".join(lines) if lines else "（群里刚才没人说话）"
@@ -421,10 +503,7 @@ async def compose_reply(msg: GroupMessage, mode: str) -> str | None:
     if profile:
         context += f"\n\n【你对 {msg.sender} 的印象】{profile}"
     if mode == "mention":
-        if bare == "大肥鱼":
-            user = f"【群聊记录】\n{context}\n\n{sender_tag} 喊了你一声，没说话。自然地应一声。"
-        else:
-            user = f"【群聊记录】\n{context}\n\n{sender_tag} 刚刚对你说话：{msg.text}\n请认真回答。"
+        return await planner_mention(msg, context, sender_tag)
     else:
         eff = memory["groups"].get(msg.group, {}).get("effects", [])
         if eff:
