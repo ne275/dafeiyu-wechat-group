@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-BRAIN_VERSION = "4.9"  # 行为修改必须递增——/fish/health 里可验证
+BRAIN_VERSION = "4.10"  # 行为修改必须递增——/fish/health 里可验证
 
 # 人格库：personas/<name>.txt；选择持久化在 data/persona_select.json，支持热切换
 PERSONA_DIR = BASE_DIR / "personas"
@@ -331,6 +331,15 @@ def system_prompt(group: str) -> str:
     if learned:
         terms = "；".join(f"{t}={m}" for t, m in list(learned.items())[:30])
         parts.append(f"【你在群里学会的黑话】（自然使用，别刻意刷）\n{terms}")
+    watched = memory["groups"].get(group, {}).get("watched", [])
+    if watched:
+        lines = "\n".join(
+            f"- {w['date']}《{w['title']}》（UP主:{w['up']}，{w['kw']}，链接 https://www.bilibili.com/video/{w['bvid']}）"
+            for w in watched[:4])
+        parts.append(
+            f"【你最近逛 B 站刷到过的视频】\n{lines}\n"
+            "（群友聊到相关话题时，可以自然提起『我前两天刷到过一个……』并分享链接；"
+            "没人提就别硬推，别当成广告位。）")
     mem = memory["groups"].get(group, {}).get("summary")
     if mem:
         gm = memory["groups"].get(group, {})
@@ -578,9 +587,90 @@ async def jargon_job():
             pass
 
 
+# ---------- 自主日程（B 站等） ----------
+async def bilibili_hot(n: int = 5) -> list[dict]:
+    """拉 B 站热门视频（公开 API，无需登录）。"""
+    try:
+        resp = await deepseek_client().get(
+            "https://api.bilibili.com/x/web-interface/ranking/v2",
+            params={"rid": 0, "type": "all"},
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        items = resp.json().get("data", {}).get("list", [])[:n]
+        return [{"title": v["title"], "up": v["owner"]["name"], "bvid": v["bvid"]} for v in items]
+    except Exception:
+        return []
+
+
+async def bilibili_search(keyword: str, n: int = 3) -> list[dict]:
+    """按关键词搜 B 站视频。"""
+    try:
+        resp = await deepseek_client().get(
+            "https://api.bilibili.com/x/web-interface/search/type",
+            params={"search_type": "video", "keyword": keyword},
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        items = resp.json().get("data", {}).get("result", [])[:n]
+        return [{"title": re.sub(r"<[^>]+>", "", v["title"]), "up": v["author"], "bvid": v["bvid"]} for v in items]
+    except Exception:
+        return []
+
+
+async def bilibili_detail(bvid: str) -> dict:
+    """视频简介 + 热评。"""
+    out = {"desc": "", "comments": []}
+    try:
+        r = await deepseek_client().get("https://api.bilibili.com/x/web-interface/view",
+                                        params={"bvid": bvid}, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+        d = r.json().get("data", {})
+        out["desc"] = d.get("desc", "")[:300]
+        aid = d.get("aid")
+        if aid:
+            r2 = await deepseek_client().get("https://api.bilibili.com/x/v2/reply",
+                                             params={"type": 1, "oid": aid, "ps": 3, "sort": 2},
+                                             headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            replies = r2.json().get("data", {}).get("replies") or []
+            out["comments"] = [c["content"]["message"][:100] for c in replies]
+    except Exception:
+        pass
+    return out
+
+
+async def bilibili_watch(group: str):
+    """鱼按日程逛 B 站：从群近期话题提取关键词→搜相关视频→看详情热评→存『看过清单』。
+    不主动发群（聊到相关话题时才提起）。"""
+    gm = memory["groups"].setdefault(group, {})
+    topic = gm.get("summary", "")
+    vids = await bilibili_hot(8)
+    if not vids:
+        return
+    # 让鱼从热门里挑一个和群话题相关的（B 站搜索接口有反爬，热门榜可用）
+    lines = "\n".join(f"{i}.《{v['title']}》（UP主:{v['up']}）" for i, v in enumerate(vids))
+    try:
+        pick = await call_deepseek(
+            f"群友最近在聊：{topic or '日常闲聊'}。从这些 B 站热门视频里挑一个最相关或最有趣的，"
+            "只输出序号（0 起）。没有特别相关就挑你（大肥鱼）会好奇的那个。",
+            lines)
+        idx = int(re.search(r"\d+", pick).group())
+        idx = min(idx, len(vids) - 1)
+    except Exception:
+        idx = 0
+    v = vids[idx]
+    detail = await bilibili_detail(v["bvid"])
+    watched = gm.setdefault("watched", [])
+    watched.insert(0, {
+        "title": v["title"], "up": v["up"], "bvid": v["bvid"],
+        "kw": "热门", "desc": detail["desc"], "comments": detail["comments"],
+        "date": time.strftime("%m-%d", time.gmtime(time.time() + TZ_OFFSET)),
+    })
+    gm["watched"] = watched[:5]  # 只留最近 5 个
+    save_memory()
+    log_chat(group, {"type": "bilibili_watch", "title": v["title"]})
+
+
 # ---------- 定时冒泡（早晚安） ----------
 CRON_SLOTS = [
     ("morning", 7, 0, "现在是早上 7 点。请叫群里的大家起床：元气满满的早安，嫌弃他们赖床，催他们别磨蹭；一两句话就好，语气像平时的你。"),
+    ("bilibili", 12, 30, ""),   # 午间逛 B 站
+    ("bilibili", 20, 30, ""),   # 晚间逛 B 站
     ("night", 23, 30, "现在是晚上 23:30 左右。请用平常聊天的语气催大家早点睡觉：嘴上嫌弃他们「又熬夜」，心里舍不得、想多陪一会儿；一两句话就好。"),
 ]
 
@@ -604,12 +694,17 @@ async def cron_loop():
                     if fired.get(slot) == today:
                         continue
                     try:
-                        text = await call_deepseek(system_prompt(group), prompt)
-                        text = outbound_eraser(text)
-                        if text:
-                            outbox[group].append(text)
+                        if slot == "bilibili":
+                            await bilibili_watch(group)  # 只存『看过清单』，不主动发群
                             fired[slot] = today
                             save_memory()
+                        else:
+                            text = await call_deepseek(system_prompt(group), prompt)
+                            text = outbound_eraser(text)
+                            if text:
+                                outbox[group].append(text)
+                                fired[slot] = today
+                                save_memory()
                     except Exception:
                         pass
         await asyncio.sleep(60)
