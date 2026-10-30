@@ -19,4 +19,4 @@ def handle(msg) -> str | None:
     if t in ("/ping", "ping"):
         return "pong 🐟"
     now = time.strftime("%H:%M", time.gmtime(time.time() + 8 * 3600))
-    return f"现在 {now}（东八区），你在想什么呢"
+    return f"{now}"
