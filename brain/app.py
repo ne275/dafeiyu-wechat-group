@@ -19,15 +19,15 @@ ACTIVE_PERIOD_SEC = int(os.environ.get("FISH_ACTIVE_PERIOD", "600"))       # 活
 ACTIVE_ENTER_PROB = float(os.environ.get("FISH_ACTIVE_ENTER_PROB", "0.05"))  # 周期外每条消息唤醒概率
 ACTIVE_SKIP_LIMIT = int(os.environ.get("FISH_ACTIVE_SKIP_LIMIT", "3"))     # 连续跳过几次提前下头
 DAILY_CAP = int(os.environ.get("FISH_DAILY_CAP", "100"))                   # 每日发言保险丝
-SUMMARY_EVERY = int(os.environ.get("FISH_SUMMARY_EVERY", "30"))            # 每群每 N 条消息沉淀一次记忆
-HISTORY_LEN = 12          # 喂给模型的最近消息条数
+SUMMARY_EVERY = int(os.environ.get("FISH_SUMMARY_EVERY", "50"))            # 每群每 N 条消息沉淀一次记忆
+HISTORY_LEN = int(os.environ.get("FISH_HISTORY_LEN", "20"))  # 喂给模型的最近消息条数
 SUMMARY_BUF_LEN = 40      # 记忆沉淀用的缓冲条数
 OWNER = os.environ.get("FISH_OWNER", "")  # 主人的微信昵称（鱼对他更亲）
 BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-BRAIN_VERSION = "4.6"  # 行为修改必须递增——/fish/health 里可验证
+BRAIN_VERSION = "4.7"  # 行为修改必须递增——/fish/health 里可验证
 
 # 人格库：personas/<name>.txt；选择持久化在 data/persona_select.json，支持热切换
 PERSONA_DIR = BASE_DIR / "personas"
@@ -332,11 +332,13 @@ def system_prompt(group: str) -> str:
         parts.append(f"【你在群里学会的黑话】（自然使用，别刻意刷）\n{terms}")
     mem = memory["groups"].get(group, {}).get("summary")
     if mem:
-        today = time.strftime("%Y-%m-%d", time.gmtime(time.time() + TZ_OFFSET))
+        gm = memory["groups"].get(group, {})
+        updated = gm.get("summary_time", "未知时间")
         parts.append(
-            f"【你脑海里关于这个群的印象】（{today}）\n{mem}\n"
+            f"【你脑海里关于这个群的印象】（更新于 {updated}）\n{mem}\n"
             "（这些是你自己慢慢攒下的印象。聊到时像老朋友一样自然提起一两句，"
-            "别背出来、别汇报，没人问也别主动秀。）")
+            "别背出来、别汇报，没人问也别主动秀。"
+            "注意时间：太旧的印象可能已过期——比如别人几天前想吃的东西，现在未必还算数。）")
     return "\n\n".join(parts)
 
 
@@ -364,6 +366,7 @@ async def summarize_group(group: str):
             f"【旧记忆】话题：{old_summary}\n成员：{old_members}\n\n【新聊天记录】\n{lines}")
         data = json.loads(raw.strip().removeprefix("```json").removesuffix("```").strip())
         gm["summary"] = data.get("topics", old_summary)
+        gm["summary_time"] = time.strftime("%m-%d %H:%M", time.gmtime(time.time() + TZ_OFFSET))
         members = gm.setdefault("members", {})
         for name, impression in data.get("members", {}).items():
             members[name] = impression
