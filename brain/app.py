@@ -152,7 +152,10 @@ async def tool_result(name: str, args: dict, msg) -> str:
         w = memory["groups"].get(msg.group, {}).get("watched", [])
         if w:
             v = w[0]
-            return f"你刷到了《{v['title']}》（UP主:{v['up']}），简介：{v['desc'][:100]}，热评：{v['comments'][:2]}，链接 https://www.bilibili.com/video/{v['bvid']}"
+            return (f"你刷到了《{v['title']}》（UP主:{v['up']}）。"
+                    f"看点：{v.get('highlight', v['desc'][:80])}。"
+                    f"热评：{v['comments'][:2]}。链接 https://www.bilibili.com/video/{v['bvid']}。"
+                    "如果其实没啥亮点就老实说『最近刷的都挺无聊的』，别硬推。")
         return "（没刷到合适的）"
     return "（未知工具）"
 
@@ -374,7 +377,7 @@ def system_prompt(group: str) -> str:
     watched = memory["groups"].get(group, {}).get("watched", [])
     if watched:
         lines = "\n".join(
-            f"- {w['date']}《{w['title']}》（UP主:{w['up']}，{w['kw']}，链接 https://www.bilibili.com/video/{w['bvid']}）"
+            f"- {w['date']}《{w['title']}》（UP主:{w['up']}，看点：{w.get('highlight', '见简介')}，链接 https://www.bilibili.com/video/{w['bvid']}）"
             for w in watched[:4])
         parts.append(
             f"【你最近逛 B 站刷到过的视频】\n{lines}\n"
@@ -772,10 +775,19 @@ async def bilibili_watch(group: str):
         idx = 0
     v = vids[idx]
     detail = await bilibili_detail(v["bvid"])
+    # 提炼一句『看点』（为什么好看/好玩），存进记忆，分享时讲这个而不是念标题
+    try:
+        highlight = await call_deepseek(
+            "根据这个视频的标题、简介和热评，用一两句话说出它真正好看/好玩的点在哪（像跟朋友安利，别像广告）。没看出亮点就说『其实没啥看点』。",
+            f"标题：《{v['title']}》（UP主:{v['up']}）\n简介：{detail['desc']}\n热评：{detail['comments']}")
+        highlight = highlight.strip()
+    except Exception:
+        highlight = ""
     watched = gm.setdefault("watched", [])
     watched.insert(0, {
         "title": v["title"], "up": v["up"], "bvid": v["bvid"],
         "kw": "热门", "desc": detail["desc"], "comments": detail["comments"],
+        "highlight": highlight,
         "date": time.strftime("%m-%d", time.gmtime(time.time() + TZ_OFFSET)),
     })
     gm["watched"] = watched[:5]  # 只留最近 5 个
