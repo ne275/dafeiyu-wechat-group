@@ -25,7 +25,7 @@ _DEFAULTS = {
     "poll_interval": 3,
     "dry_run": False,
 }
-HAND_VERSION = "4.7"  # 每次行为修改必须递增——日志里用来确认改动是否生效
+HAND_VERSION = "4.8"  # 每次行为修改必须递增——日志里用来确认改动是否生效
 
 _cfg_path = Path(__file__).parent / "config.json"
 _cfg = {**_DEFAULTS, **json.loads(_cfg_path.read_text(encoding="utf-8"))} if _cfg_path.exists() else _DEFAULTS
@@ -312,6 +312,7 @@ def main():
                     resp = brain_post("/group-message", {
                         "group": group, "sender": m.sender,
                         "text": text, "mention": mention, "image_b64": image_b64,
+                        "ts": time.strftime("%H:%M"),
                     })
                     pt.mark("问鱼脑")
                     reply = resp.get("reply")

@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-BRAIN_VERSION = "4.4"  # 行为修改必须递增——/fish/health 里可验证
+BRAIN_VERSION = "4.5"  # 行为修改必须递增——/fish/health 里可验证
 
 # 人格库：personas/<name>.txt；选择持久化在 data/persona_select.json，支持热切换
 PERSONA_DIR = BASE_DIR / "personas"
@@ -112,6 +112,7 @@ class GroupMessage(BaseModel):
     text: str
     mention: bool = False   # fish_hand 检测到"引用了鱼"时置真
     image_b64: str = ""     # 可选：消息附带图片的 base64（视觉理解）
+    ts: str = ""            # 鱼手捕捉时间（HH:MM，东八区）
 
 
 class EffectReport(BaseModel):
@@ -222,6 +223,31 @@ def record_stats(mode: str, latency_ms: int, llm_ms: int):
     st["mentions" if mode == "mention" else "actives"] += 1
     st["latencies"].append({"total": latency_ms, "llm": llm_ms})
     save_memory()
+
+
+# ---------- 插件系统 ----------
+PLUGIN_DIR = BASE_DIR / "plugins"
+_plugins: list = []
+
+
+def load_plugins():
+    """加载 plugins/*.py。协议：模块提供 match(text)->bool 和 handle(msg)->str|None。
+    命中即答（不走 LLM）。"""
+    import importlib.util
+    if not PLUGIN_DIR.exists():
+        return
+    for f in sorted(PLUGIN_DIR.glob("*.py")):
+        try:
+            spec = importlib.util.spec_from_file_location(f"fish_plugin_{f.stem}", f)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            if hasattr(mod, "match") and hasattr(mod, "handle"):
+                _plugins.append(mod)
+        except Exception as e:
+            print(f"[plugin] {f.name} 加载失败: {e}")
+
+
+load_plugins()
 
 
 # ---------- 出站橡皮擦 ----------
@@ -416,7 +442,7 @@ async def compose_reply(msg: GroupMessage, mode: str) -> str | None:
 
 def build_active_context(msg: GroupMessage) -> tuple[str, str]:
     """active 模式的上下文与说话人标签（含画像与上次反响）。"""
-    lines = [f"{m['sender']}: {m['text']}" for m in history[msg.group]]
+    lines = [f"[{m.get('ts', '?')}] {m['sender']}: {m['text']}" for m in history[msg.group]]
     context = "\n".join(lines) if lines else "（群里刚才没人说话）"
     profile = sender_profile(msg.group, msg.sender)
     if profile:
@@ -435,10 +461,24 @@ async def group_message(msg: GroupMessage, x_fish_key: str = Header(default=""))
     if x_fish_key != FISH_KEY:
         raise HTTPException(status_code=403)
     t0 = time.time()
+    # 插件优先：命中即答，不走 LLM
+    for plugin in _plugins:
+        try:
+            if plugin.match(msg.text):
+                answer = plugin.handle(msg)
+                if answer:
+                    log_chat(msg.group, {"sender": msg.sender, "text": msg.text, "mode": "plugin"})
+                    history[msg.group].append({"sender": msg.sender, "text": msg.text, "ts": msg.ts})
+                    log_chat(msg.group, {"sender": "大肥鱼", "text": answer, "mode": "plugin"})
+                    history[msg.group].append({"sender": "大肥鱼", "text": answer,
+                                               "ts": time.strftime("%H:%M", time.gmtime(time.time() + TZ_OFFSET))})
+                    return {"reply": answer, "mode": "plugin", "parts": split_bubbles(answer)}
+        except Exception:
+            continue
     mode = decide_reply(msg)
     log_chat(msg.group, {"sender": msg.sender, "text": msg.text, "mention": msg.mention, "mode": mode})
-    history[msg.group].append({"sender": msg.sender, "text": msg.text})
-    summary_buf[msg.group].append({"sender": msg.sender, "text": msg.text})
+    history[msg.group].append({"sender": msg.sender, "text": msg.text, "ts": msg.ts})
+    summary_buf[msg.group].append({"sender": msg.sender, "text": msg.text, "ts": msg.ts})
     gm = memory["groups"].setdefault(msg.group, {})
     gm["since"] = gm.get("since", 0) + 1
     if gm["since"] >= SUMMARY_EVERY:
@@ -472,7 +512,8 @@ async def group_message(msg: GroupMessage, x_fish_key: str = Header(default=""))
     daily_count[time.strftime("%F")] += 1
     latency_ms = int((time.time() - t0) * 1000)
     record_stats(mode, latency_ms, llm_ms)
-    history[msg.group].append({"sender": "大肥鱼", "text": answer})
+    history[msg.group].append({"sender": "大肥鱼", "text": answer,
+                               "ts": time.strftime("%H:%M", time.gmtime(time.time() + TZ_OFFSET))})
     log_chat(msg.group, {"sender": "大肥鱼", "text": answer, "mode": mode,
                          "latency_ms": latency_ms, "llm_ms": llm_ms})
     return {"reply": answer, "mode": mode, "parts": split_bubbles(answer)}
