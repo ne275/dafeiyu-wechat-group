@@ -27,7 +27,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.environ.get("FISH_DATA_DIR", str(BASE_DIR / "data")))
 TZ_OFFSET = 8 * 3600      # 固定东八区
 
-BRAIN_VERSION = "4.8"  # 行为修改必须递增——/fish/health 里可验证
+BRAIN_VERSION = "4.9"  # 行为修改必须递增——/fish/health 里可验证
 
 # 人格库：personas/<name>.txt；选择持久化在 data/persona_select.json，支持热切换
 PERSONA_DIR = BASE_DIR / "personas"
@@ -323,7 +323,8 @@ async def call_deepseek(system: str, user: str, image_b64: str = "") -> str:
 
 
 def system_prompt(group: str) -> str:
-    parts = [get_persona()]
+    now_str = time.strftime("%Y-%m-%d %H:%M", time.gmtime(time.time() + TZ_OFFSET))
+    parts = [get_persona(), f"【当前时间】{now_str}（东八区）"]
     if MEMES:
         parts.append(MEMES)
     learned = memory.get("jargon", {})

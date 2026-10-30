@@ -11,7 +11,7 @@ import time
 
 def match(text: str) -> bool:
     t = text.strip()
-    return t in ("/ping", "ping") or t.startswith("/时间") or t == "现在几点"
+    return t in ("/ping", "ping") or "几点" in t or "现在时间" in t
 
 
 def handle(msg) -> str | None:
