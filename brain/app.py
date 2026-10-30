@@ -461,7 +461,7 @@ async def planner_mention(msg: GroupMessage, context: str, sender_tag: str) -> s
             "认真回答。遇到不懂或时事，先用 web_search 查再答；"
             "被要求逛 B 站/找视频时用 browse_bilibili。"
             "最后必须用 reply 工具给出你的回复。"
-            "闲聊一两句；如果对方要推荐/介绍/查资料，可以分 2-3 条气泡把要点说全（用 [[next]] 分隔），别只答一句。")},
+            "回复长短由内容决定：闲聊一两句，需要说全就分 2-3 条气泡展开（用 [[next]] 分隔），不硬凑也不硬憋。")},
     ]
     for _ in range(3):
         try:
